@@ -91,3 +91,14 @@ DREMLA_OUTCOME_SCOPE=repo nice -n 15 scripts/verify-outcome.sh
 ## Other workflows
 
 - `.forgejo/workflows/signing-smoke.yml`: the release signing smoke test, manual only (`workflow_dispatch`, and only on `main`). It never runs on pull requests or pushes. Every step has a timeout, and the step timeouts add up to less than the 15 minute job timeout, so the cleanup step that removes the signing directory runs unless the run is cancelled or the runner dies (see the limits in release signing). See [release signing](release-signing.md).
+
+## Release lock gates
+
+`verify-outcome.sh` also runs `scripts/test-release-lock.sh` (offline runtime fixtures for
+lock generation/validation, release failure paths and version propagation) and
+`scripts/check-release-lock.sh` (documented schema and field formats, then a read-only check of
+the published release: it resolves the tag, downloads the APK and `SHA256SUMS`, and compares every
+identity field of the lock with the asset, so a lock check needs the forge to be reachable). Before
+the first release, an absent lock passes explicitly as `no release lock yet`. Python 3 is
+required. See [release.md](release.md) for the manual release workflow, the explicit
+`DREMLA_VERSION_CODE` / `DREMLA_VERSION_NAME` hook and the follow-up lock PR.

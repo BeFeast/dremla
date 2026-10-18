@@ -24,6 +24,9 @@ jobs:
     env:
       # Every Gradle call in scripts/verify-outcome.sh passes --max-workers=$DREMLA_GRADLE_MAX_WORKERS.
       DREMLA_GRADLE_MAX_WORKERS: "4"
+      # Public read-only release identity verification; no workflow token needed.
+      DREMLA_FORGE_URL: ${{ github.server_url }}
+      DREMLA_REPOSITORY: ${{ github.repository }}
     steps:
       - name: Checkout
         uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

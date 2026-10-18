@@ -36,6 +36,13 @@ if [[ ! "$workers" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 gradle=(./gradlew --no-daemon "--max-workers=$workers")
+# Explicit version hook: no shell splitting, eval or arbitrary Gradle arguments.
+if [[ -n "${DREMLA_VERSION_CODE:-}${DREMLA_VERSION_NAME:-}" ]]; then
+  DREMLA_SOURCE_SHA=0000000000000000000000000000000000000000 \
+    RELEASE_SIGNING_CERT_SHA256=0000000000000000000000000000000000000000000000000000000000000000 \
+    python3 -I scripts/release-tools.py inputs
+  gradle+=("-Pdremla.versionCode=$DREMLA_VERSION_CODE" "-Pdremla.versionName=$DREMLA_VERSION_NAME")
+fi
 
 readonly RELEASE_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
 readonly DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -135,6 +142,8 @@ run_stage "kit-port" scripts/check-kit-port.sh
 run_stage "privacy-self-test" scripts/test-privacy.sh
 run_stage "privacy" scripts/check-privacy.sh
 run_stage "signing-self-test" scripts/test-signing.sh
+run_stage "release-lock-self-test" scripts/test-release-lock.sh
+run_stage "release-lock" scripts/check-release-lock.sh
 
 if [[ "$scope" == "full" ]]; then
   device_identity_stage

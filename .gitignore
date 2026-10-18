@@ -11,3 +11,6 @@ local.properties
 *.pfx
 *.apk
 *.aab
+
+# Local release preparation (published assets never enter git).
+/release-out/
