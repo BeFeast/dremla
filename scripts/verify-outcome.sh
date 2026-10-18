@@ -6,10 +6,11 @@
 #
 # Host checks: clean build of debug and unsigned release APKs, unit tests with golden scenes,
 # lint, APK inspection, the hygiene check, the forbidden-API check and the brand-kit port check,
-# each check with its self-test. After the Gradle stage it prints the unit-test counts per class.
-# Every stage runs even when an earlier one failed; the summary lists all of them and the exit
-# status is non-zero if any check failed. The script does not lower its own priority; callers wrap
-# it (CI uses nice -n 19).
+# each check with its self-test, and the self-test of the release signing scripts (throwaway
+# keystore, stub curl, no network; needs JAVA_HOME or keytool on PATH, jq and shred). After the
+# Gradle stage it prints the unit-test counts per class. Every stage runs even when an earlier one
+# failed; the summary lists all of them and the exit status is non-zero if any check failed. The
+# script does not lower its own priority; callers wrap it (CI uses nice -n 19).
 set -euo pipefail
 
 if [[ $# -ne 0 ]]; then
@@ -131,6 +132,7 @@ run_stage "forbidden-apis-self-test" scripts/test-forbidden-apis.sh
 run_stage "forbidden-apis" scripts/check-forbidden-apis.sh
 run_stage "kit-port-self-test" scripts/test-kit-port.sh
 run_stage "kit-port" scripts/check-kit-port.sh
+run_stage "signing-self-test" scripts/test-signing.sh
 
 if [[ "$scope" == "full" ]]; then
   device_identity_stage

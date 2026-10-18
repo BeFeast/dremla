@@ -1,0 +1,107 @@
+# Release signing smoke test (issue #7). Manual only. Resolves the release keystore from the
+# secret store through Universal Auth, prints its certificate SHA-256 and requires it to equal
+# vars.RELEASE_SIGNING_CERT_SHA256. Prints no secret, uploads no artifact, and removes the signing
+# directory whatever the outcome. See docs/release-signing.md.
+#
+# Timeout invariant: the step timeouts add up to 12 minutes (2 + 1 + 1 + 5 + 2 + 1), 3 minutes
+# under the 15 minute job timeout. A hung step is ended by its own timeout while the job is still
+# alive, so the always() cleanup step gets its turn. Keep the sum plus a margin for job setup
+# below the job timeout when a step or a timeout changes.
+name: signing-smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: signing-smoke
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  smoke:
+    name: release signing smoke
+    # A dispatch on another branch is skipped, so an accidental run does not give that branch's
+    # scripts the secrets. This guards against mistakes only: a branch can edit this file too.
+    if: github.ref == 'refs/heads/main'
+    runs-on: heavy
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        timeout-minutes: 2
+        uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Check variables, secrets and tools
+        timeout-minutes: 1
+        env:
+          INFISICAL_API_URL: ${{ vars.INFISICAL_API_URL }}
+          INFISICAL_PROJECT_ID: ${{ vars.INFISICAL_PROJECT_ID }}
+          RELEASE_SIGNING_CERT_SHA256: ${{ vars.RELEASE_SIGNING_CERT_SHA256 }}
+          # Presence only: the values are not passed to this step.
+          HAS_CLIENT_ID: ${{ secrets.INFISICAL_CLIENT_ID != '' }}
+          HAS_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET != '' }}
+        run: |
+          problems=()
+          [[ -n "$INFISICAL_API_URL" ]] || problems+=("repository variable INFISICAL_API_URL is not set")
+          [[ -z "$INFISICAL_API_URL" || "$INFISICAL_API_URL" == https://* ]] ||
+            problems+=("repository variable INFISICAL_API_URL must start with https://")
+          [[ -n "$INFISICAL_PROJECT_ID" ]] || problems+=("repository variable INFISICAL_PROJECT_ID is not set")
+          [[ "$RELEASE_SIGNING_CERT_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+            problems+=("repository variable RELEASE_SIGNING_CERT_SHA256 must be 64 lowercase hex digits")
+          [[ "$HAS_CLIENT_ID" == true ]] || problems+=("repository secret INFISICAL_CLIENT_ID is not set")
+          [[ "$HAS_CLIENT_SECRET" == true ]] || problems+=("repository secret INFISICAL_CLIENT_SECRET is not set")
+          for tool in curl jq base64 sha256sum; do
+            command -v "$tool" >/dev/null 2>&1 || problems+=("$tool is not on the runner PATH")
+          done
+          [[ -n "${JAVA_HOME:-}" && -x "${JAVA_HOME:-}/bin/keytool" ]] ||
+            problems+=("JAVA_HOME is not set or has no bin/keytool")
+          if [[ ${#problems[@]} -ne 0 ]]; then
+            printf 'signing-smoke: %s\n' "${problems[@]}" >&2
+            exit 1
+          fi
+
+      # RUNNER_TEMP from the runner environment, else from the runner context; the cleanup step
+      # uses the same value.
+      - name: Create the signing directory
+        timeout-minutes: 1
+        env:
+          RUNNER_TEMP_CONTEXT: ${{ runner.temp }}
+        run: RUNNER_TEMP="${RUNNER_TEMP:-$RUNNER_TEMP_CONTEXT}" scripts/signing-dir-create.sh
+
+      - name: Resolve the signing material (Universal Auth)
+        timeout-minutes: 5
+        env:
+          INFISICAL_API_URL: ${{ vars.INFISICAL_API_URL }}
+          INFISICAL_PROJECT_ID: ${{ vars.INFISICAL_PROJECT_ID }}
+          INFISICAL_CLIENT_ID: ${{ secrets.INFISICAL_CLIENT_ID }}
+          INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+        run: scripts/resolve-signing.sh
+
+      - name: Compare the certificate SHA-256
+        timeout-minutes: 2
+        env:
+          RELEASE_SIGNING_CERT_SHA256: ${{ vars.RELEASE_SIGNING_CERT_SHA256 }}
+        run: |
+          digest="$(scripts/signing-cert-digest.sh)"
+          echo "release signing certificate SHA-256: $digest"
+          if [[ "$digest" == "$RELEASE_SIGNING_CERT_SHA256" ]]; then
+            echo "matches RELEASE_SIGNING_CERT_SHA256: yes"
+          else
+            echo "matches RELEASE_SIGNING_CERT_SHA256: no (expected $RELEASE_SIGNING_CERT_SHA256, got $digest)" >&2
+            exit 1
+          fi
+
+      # Runs whatever the earlier steps did; the timeout invariant above leaves the job time for it.
+      - name: Remove the signing directory
+        if: always()
+        timeout-minutes: 1
+        env:
+          RUNNER_TEMP_CONTEXT: ${{ runner.temp }}
+        run: RUNNER_TEMP="${RUNNER_TEMP:-$RUNNER_TEMP_CONTEXT}" scripts/signing-dir-remove.sh
