@@ -35,6 +35,8 @@ Locally, run one Gradle build at a time under `nice -n 15`; the scripts default 
 `DREMLA_OUTCOME_SCOPE=repo scripts/verify-outcome.sh`, which runs every stage, prints a summary table and exits non-zero if any stage failed:
 
 1. `gradle-build-test-golden-lint`: `./gradlew --no-daemon --max-workers=N --continue clean assembleDebug assembleRelease verifyRoborazziDebug lintDebug`. One Gradle call, so the unit tests run once: `verifyRoborazziDebug` depends on `testDebugUnitTest` and runs it in verify mode, where a golden mismatch fails its scene test. Lint aborts on errors; `assembleRelease` also runs `lintVitalRelease`. `--continue` keeps the other tasks running after a failure, so a failing unit test, golden scene or `lintVitalRelease` still leaves the `lintDebug` report for the artifact, and the call still exits non-zero.
+
+   After this stage the script prints one line per test class from the JUnit XML in `app/build/test-results/testDebugUnitTest` (tests, failures, errors, skipped, time) and a total, so the job log shows what ran. It prints only the class name and the counts; the XML also holds the runner's host name and the test output. The table is a report, not a stage: a failing test already fails stage 1. Without XML results (for example when compilation failed) it says so.
 2. `scripts/inspect-apk.sh` on the unsigned release APK: applicationId `com.befeast.sleepmusic`, minSdk 28, targetSdk 34, no `lib/**` entries; prints versionCode, versionName and the signing certificate (`none (unsigned APK)` for the release build).
 3. `scripts/inspect-apk.sh` on the debug APK, which must be signed (debug key).
 4. `scripts/test-hygiene.sh`: self-test of the hygiene check against fixtures generated at runtime.
@@ -45,13 +47,16 @@ Locally, run one Gradle build at a time under `nice -n 15`; the scripts default 
    - no private orchestrator state paths (its dot-directory as a path segment, its database file), in content or in names.
 6. `scripts/test-forbidden-apis.sh`: self-test of the forbidden-API check against sources generated at runtime.
 7. `scripts/check-forbidden-apis.sh`: no Compose path iteration in `app/src/main` (see [Native libraries](#native-libraries)).
+8. `scripts/test-kit-port.sh`: self-test of the brand-kit port check on a scratch copy of the listed files. A flipped byte, a missing file, a dropped manifest line, a path alias, a changed or extra `substituted` line, a malformed change record and edits to the substituted file, inside and outside its substituted line, must each fail; a later change with its change record must pass.
+9. `scripts/check-kit-port.sh`: the manifest `docs/kit-port.sha256` lists exactly 38 files under canonical, distinct paths, and every one exists with its listed SHA-256. The checker pins the one substitution (`LibraryTest.kt` line 180): the manifest must have exactly one `substituted` line, with that path, that line and the pinned SHA-256 of the listed file without that line. The file must have the committed SHA-256 the manifest records; with line 180 deleted it must have the pinned SHA-256; and line 180 must be exactly the committed text, which names `collection.example`. A later change to a ported file carries a `# was <sha256> (#N)` record above its line (see [docs/kit-port.md](kit-port.md)).
 
 The default scope (`full`, used outside CI) adds a device-identity stage. It prints `device identity: not configured (enabled by the install issue)` and does not fail until the install issue wires it up. Unknown scope values fail.
 
 ## Artifacts
 
-- `verify-outcome-log`, always: the full output of the script, including the APK inspection. Kept 7 days.
-- `failure-evidence`, only when the job fails: `app/build/outputs/roborazzi` (for every changed scene `<name>_actual.png` and `<name>_compare.png`, which shows reference, diff and new side by side) and `app/build/reports` (lint, unit-test and Roborazzi reports). Kept 7 days.
+- `verify-outcome-log`, always: the full output of the script, including the APK inspection and the unit-test table. Kept 7 days.
+- `unit-test-reports`, always: the HTML unit-test report (`app/build/reports/tests/testDebugUnitTest`). The JUnit XML is not uploaded because it records the runner's host name; the per-class table in the log is built from it. A missing report is skipped, for example when compilation failed. Kept 7 days.
+- `failure-evidence`, only when the job fails: `app/build/outputs/roborazzi` (for every changed scene `<name>_actual.png` and `<name>_compare.png`, which shows reference, diff and new side by side) and `app/build/reports` (lint, unit-test and Roborazzi reports; the unit-test report is also in `unit-test-reports`). Kept 7 days.
 
 ## Golden scenes
 

@@ -5,10 +5,11 @@
 #   DREMLA_GRADLE_MAX_WORKERS  --max-workers for every Gradle call (default 2).
 #
 # Host checks: clean build of debug and unsigned release APKs, unit tests with golden scenes,
-# lint, APK inspection, the hygiene check and the forbidden-API check, each check with its
-# self-test. Every stage runs even when an earlier one failed; the summary lists all of them and
-# the exit status is non-zero if any check failed. The script does not lower its own priority;
-# callers wrap it (CI uses nice -n 19).
+# lint, APK inspection, the hygiene check, the forbidden-API check and the brand-kit port check,
+# each check with its self-test. After the Gradle stage it prints the unit-test counts per class.
+# Every stage runs even when an earlier one failed; the summary lists all of them and the exit
+# status is non-zero if any check failed. The script does not lower its own priority; callers wrap
+# it (CI uses nice -n 19).
 set -euo pipefail
 
 if [[ $# -ne 0 ]]; then
@@ -37,6 +38,7 @@ gradle=(./gradlew --no-daemon "--max-workers=$workers")
 
 readonly RELEASE_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
 readonly DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
+readonly UNIT_TEST_RESULTS="app/build/test-results/testDebugUnitTest"
 
 stage_names=()
 stage_results=()
@@ -63,6 +65,41 @@ run_stage() {
   echo "==== stage: $name -> $result in ${elapsed}s"
 }
 
+# Per-class counts from the JUnit XML that testDebugUnitTest writes, so the log shows what ran.
+# Only the suite name and its counts are printed; the XML also carries the host name and the test
+# output. A report, not a stage: a failing test already fails the Gradle stage.
+unit_test_summary() {
+  echo
+  echo "==== unit tests ($UNIT_TEST_RESULTS)"
+  local results=("$UNIT_TEST_RESULTS"/TEST-*.xml)
+  if [[ ! -f "${results[0]}" ]]; then
+    echo "no JUnit XML results (the unit tests did not run)"
+    return 0
+  fi
+  # POSIX awk: the first <testsuite ...> start tag of each file holds the counts as attributes.
+  LC_ALL=C awk '
+    function attr(tag, key,   i, rest) {
+      i = index(tag, " " key "=\"")
+      if (i == 0) return ""
+      rest = substr(tag, i + length(key) + 3)
+      return substr(rest, 1, index(rest, "\"") - 1)
+    }
+    BEGIN { n = tt = tf = te = tk = ts = 0; fmt = "%-56s %6s %9s %7s %8s %9s\n"; printf fmt, "class", "tests", "failures", "errors", "skipped", "time" }
+    !(FILENAME in done) && /<testsuite / {
+      done[FILENAME] = 1
+      t = attr($0, "tests") + 0; f = attr($0, "failures") + 0; e = attr($0, "errors") + 0
+      k = attr($0, "skipped") + 0; s = attr($0, "time") + 0
+      printf fmt, attr($0, "name"), t, f, e, k, sprintf("%.3fs", s)
+      n++; tt += t; tf += f; te += e; tk += k; ts += s
+    }
+    END {
+      for (i = 1; i < ARGC; i++) if (!(ARGV[i] in done)) { printf "%s: no <testsuite> element\n", ARGV[i]; bad++ }
+      printf fmt, "total (classes: " n ")", tt, tf, te, tk, sprintf("%.3fs", ts)
+      if (bad) exit 1
+    }
+  ' "${results[@]}" || echo "unit tests: could not read every result file"
+}
+
 # Device identity (installed package, version, signing certificate) is wired up by the install
 # issue. Until then the stage reports itself as not configured and does not fail.
 device_identity_stage() {
@@ -83,6 +120,7 @@ echo "verify-outcome: scope=$scope gradle-max-workers=$workers"
 # makes the call exit non-zero.
 run_stage "gradle-build-test-golden-lint" \
   "${gradle[@]}" --continue clean assembleDebug assembleRelease verifyRoborazziDebug lintDebug
+unit_test_summary
 run_stage "inspect-release-apk" \
   env DREMLA_APK="$RELEASE_APK" DREMLA_APK_REQUIRE_SIGNED=0 scripts/inspect-apk.sh
 run_stage "inspect-debug-apk" \
@@ -91,6 +129,8 @@ run_stage "hygiene-self-test" scripts/test-hygiene.sh
 run_stage "public-hygiene" scripts/check-public-hygiene.sh
 run_stage "forbidden-apis-self-test" scripts/test-forbidden-apis.sh
 run_stage "forbidden-apis" scripts/check-forbidden-apis.sh
+run_stage "kit-port-self-test" scripts/test-kit-port.sh
+run_stage "kit-port" scripts/check-kit-port.sh
 
 if [[ "$scope" == "full" ]]; then
   device_identity_stage

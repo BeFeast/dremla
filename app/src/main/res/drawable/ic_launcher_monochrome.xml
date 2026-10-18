@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Placeholder monochrome layer (a single dot); the brand kit replaces it. -->
+<!-- Dremla adaptive-icon layer, converted from brand/final/icon-*.svg by tools/build.py. 108x108 dp canvas, mark inside the 66 dp safe zone. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -7,5 +7,9 @@
     android:viewportHeight="108">
     <path
         android:fillColor="#FF000000"
-        android:pathData="M54,42a12,12 0,1 1,0 24a12,12 0,1 1,0 -24z" />
+        android:fillType="evenOdd"
+        android:pathData="M30,54a24,24 0 1,0 48,0a24,24 0 1,0 -48,0zM36.968,51.677a17.032,17.032 0 1,0 34.065,0a17.032,17.032 0 1,0 -34.065,0z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M47.18,67.284A6.968,6.968 0 0,1 60.82,67.284A17.032,17.032 0 0,1 47.18,67.284z" />
 </vector>

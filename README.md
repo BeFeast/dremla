@@ -6,6 +6,7 @@ Android TV bedtime-music app. One press on the remote starts soft ambient or cal
 - Design contract: [docs/design-contract.md](docs/design-contract.md)
 - Agent rules: [AGENTS.md](AGENTS.md)
 - Build, CI and golden scenes: [docs/ci.md](docs/ci.md)
+- Brand-kit port and its SHA-256 check: [docs/kit-port.md](docs/kit-port.md)
 
 ## Build
 
@@ -15,6 +16,6 @@ JDK 17 and an Android SDK with platform 34 and build-tools 34.0.0 (`ANDROID_HOME
 DREMLA_OUTCOME_SCOPE=repo scripts/verify-outcome.sh
 ```
 
-runs the clean build, unit tests, lint, golden scenes, APK inspection, the hygiene check and the forbidden-API check.
+runs the clean build, unit tests, lint, golden scenes, APK inspection, the hygiene check, the forbidden-API check and the brand-kit port check.
 
 License: MIT. Bundled fonts (Archivo, Inter) are under the SIL Open Font License 1.1. Collection audio is CC0 or public-domain mark; the app downloads it at runtime and it is never stored in this repository.

@@ -1,0 +1,60 @@
+# Brand kit and pure playback logic ported from the prototype baseline (issue #2).
+# Checked by scripts/check-kit-port.sh (self-test: scripts/test-kit-port.sh); see docs/kit-port.md.
+#
+# "<sha256>  <path>": a file listed in the issue with its listed SHA-256, in the issue's order.
+# <path> is canonical (no "./", "..", empty segment or leading "/") and appears once. The
+# committed file must hash to <sha256>, except the one substituted file below.
+#
+# "substituted  <committed sha256>  <path>  <line>  <sha256 without line>": exactly one such line,
+# for the path, line and <sha256 without line> pinned in the checker. The committed file carries
+# the one documented substitution on <line>. It must hash to <committed sha256>; with <line>
+# deleted it must hash to <sha256 without line>, the SHA-256 of the listed file with the same line
+# deleted, so it differs from the listed file on <line> only; and <line> must be the exact text
+# the checker pins (docs/kit-port.md).
+#
+# A ported file changed later by issue #N: its line gets the new SHA-256, and a comment directly
+# above it, in the form "# was <sha256 listed in issue #2> (#N)", records the change.
+5473470f7ba10dad68e5d9f900f3a2631fd487761b6a15f0a1598a317aa00525  app/src/main/assets/licenses/OFL-Archivo.txt
+6f5d92514f189c0643eb5bd7f4da60508d7d93d37528c9b1f6484c3c25c66753  app/src/main/assets/licenses/OFL-Inter.txt
+89f7388a8c577a329b1ea0a26599343e3f42729b799b398785e83b48a1053c6b  app/src/main/java/com/befeast/sleepmusic/Fades.kt
+b9cfde6e2b06559d6bcffb7946db4018ee5e358d4b106dd472ded27e6744b6b3  app/src/main/java/com/befeast/sleepmusic/Library.kt
+c7fc1119b286387a044a5d64ee3c7ad18ed4c4ee74d87ddf6bb745f826755f4b  app/src/main/java/com/befeast/sleepmusic/ShuffleBag.kt
+793e60fbd810e9466ecb19d6004141de10f33c9864ade125e67918a252972be5  app/src/main/java/com/befeast/sleepmusic/StartVolume.kt
+9744442d0f47bd826ca9d419cfbf66717145b7d28a45e9fe7cd32e7a8e4d5f2a  app/src/main/java/com/befeast/sleepmusic/ui/BrandTheme.kt
+e23c55fe13018d08dec33b14d300e465d7484d3ab1b8bbb3b9eb6d0163fabec1  app/src/main/res/drawable-xhdpi/tv_banner.png
+1bfac2e5b7e51b0c1f284160484afe887a9e76daa60d71ef20253d8f8f9d8564  app/src/main/res/drawable-xxhdpi/tv_banner.png
+1b2c7a48a00ebdddbaac15cc70de2d3aa961e03d204b4eeb5263efe4e90f81a8  app/src/main/res/drawable/ic_launcher_foreground.xml
+30802d6d9bb0cf9f1af865504a6fef561ac148ae80465283d70b2d62594cb64a  app/src/main/res/drawable/ic_launcher_monochrome.xml
+874323ef45edc9e3d45a9825d84a7b80847da163b380eadab60467bf5359a9ce  app/src/main/res/drawable/mark_night.xml
+84f341514ad2685c28ab077859ed2b46a5155900785b014d04741062c7c72b8c  app/src/main/res/font/archivo_light.ttf
+576d94221a84609db9dba5cc3c3f69bd1dbe72b3d64ddc38df7d43c1b9290240  app/src/main/res/font/archivo_regular.ttf
+f17e87d717c5107a5bd58ce2b0cf632b3f42d262cdd4577000eb188f206a5752  app/src/main/res/font/archivo_semibold.ttf
+d3740d1c26ec002950bd056f4f4f3740513a012ed2c475c553856e01e5cff7ba  app/src/main/res/font/inter_cyrillic_light.ttf
+fc6222368410e73d71967d9a932a25e280fa2f4b5154998a25e4303dcea8e3b4  app/src/main/res/font/inter_cyrillic_regular.ttf
+744c3fde78ca9c9841e992012f1b713521a56e8989d1270ca103cb3a159c68b7  app/src/main/res/font/inter_cyrillic_semibold.ttf
+6660368aa16aa05dee1b35465d73e32988353f876f2bebd36dcfd0ef61c59814  app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+6660368aa16aa05dee1b35465d73e32988353f876f2bebd36dcfd0ef61c59814  app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+b3fba2fa2203448cfc98c4180f518a1f1fbcac69c35bc9989d9858b320d69d96  app/src/main/res/mipmap-hdpi/ic_launcher.png
+e7e5b7e1cea84c03d8e90deedd06ce9bef5a5b406516b735db8abc638905b516  app/src/main/res/mipmap-hdpi/ic_launcher_round.png
+3cc44755b1d1363a93d87c0e18a28e1e42d6d5888e4ed43a668f2caa6cad2195  app/src/main/res/mipmap-mdpi/ic_launcher.png
+04db6be3e129d0d5ec6d3130196d7287475a537239fa6416f837ae56eb897b9e  app/src/main/res/mipmap-mdpi/ic_launcher_round.png
+ce5daf78af428aebac5cb901ccdd9864a4210c198be8ad498b5092d8afbb6a0d  app/src/main/res/mipmap-xhdpi/ic_launcher.png
+5a152c94e2d7f24010ab5804cd5f37b1de8584425ed8c48f79a386c4aaf86d26  app/src/main/res/mipmap-xhdpi/ic_launcher_round.png
+ed3157d9db12008034d6c50905cafb39b360ffd6ecbb43dc81b1e7bb7b464b91  app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+1ff63c6de02ffa8fae001e4dfd32f1936b066d5cc56859a11c452465711c96e1  app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
+2e241f8d9dbb2bd92edbab2723caad76efbd3c8e297e5e72b0234230dd6ca6f8  app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+5f3d6fa36fe1f2cf3442b7d8dece5b52eaf917305f2463dfeb8f3f04ff1b2e49  app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
+6d4543f4e90d2591c8150ed6861cc510cfe45c886d5383739c9df61c44c35eca  app/src/main/res/values/colors.xml
+72d9ccf632d4530fb2a12306add9deb21e77bd2688cedd2ad8aaa999ede64c21  app/src/main/res/values/strings_brand.xml
+725ad86a94212ec070604b249675337b887b0b18c48fbd2005fa35f26bd09700  app/src/main/res/values/themes.xml
+b38215cca17360dad50d80ff9557fcbaa913111085acbe71401c82b3e6e9b631  app/src/test/java/com/befeast/sleepmusic/FadesTest.kt
+22baee644fdea92d6347e9a0b16b539f83ff63e6b408ec87fd48d12733af4ded  app/src/test/java/com/befeast/sleepmusic/LibraryTest.kt
+410c264217f6927e7f9c7ecf1d573da3e2f60670d484fa78d93f96e8c7cbdc79  app/src/test/java/com/befeast/sleepmusic/RemainingTimeTest.kt
+cc66cecb25c8f8b7d2870d44e0a4634b5c088d9b12b11b9888a3a3da8f199b9d  app/src/test/java/com/befeast/sleepmusic/ShuffleBagTest.kt
+7c520ee0d13c00eb76428a930f74c278e56abcb96a783b3f4a509cfdfd157512  app/src/test/java/com/befeast/sleepmusic/StartVolumeTest.kt
+
+# LibraryTest.kt line 180: the baseline's http:// origin (a private LAN address with port 8790)
+# becomes the documentation host name collection.example with the same port and path.
+# Fields: the committed SHA-256, the path, the line, and the SHA-256 of the listed file
+# (22baee644fdea92d6347e9a0b16b539f83ff63e6b408ec87fd48d12733af4ded above) without that line.
+substituted  9ac2dc3d890b5f4618cdef2ba6781bae6553c0b84704bf1a9f2043a9e9f49449  app/src/test/java/com/befeast/sleepmusic/LibraryTest.kt  180  e68af20f5ee74bc387fba51d1cfe6de39b1c915e008ca80f55871822de41a08b

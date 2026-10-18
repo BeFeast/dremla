@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The only string resource that carries the product name. -->
+<!-- The only string resource that carries the product name. Rename: change it here and rebuild brand/final (tools/build.py) for the banner and wordmarks. -->
 <resources>
     <string name="app_name">Dremla</string>
 </resources>

@@ -1,6 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Placeholder: the brand kit replaces this file with the full token set (docs/design-contract.md). -->
+<!-- Dremla brand colours, generated from brand/final/tokens.json. brand_night_* are the only colours allowed inside the app; brand_launcher_* are for the launcher icon and TV banner only. -->
 <resources>
+    <color name="brand_night_ground">#000000</color>
+    <color name="brand_night_panel">#15100F</color>
+    <color name="brand_night_line">#2B1C18</color>
+    <color name="brand_night_key">#4A3229</color>
+    <color name="brand_night_track">#2A1512</color>
+    <color name="brand_night_ember">#B8443C</color>
+    <color name="brand_night_text">#AD7A5B</color>
+    <color name="brand_night_text2">#A67253</color>
+    <color name="brand_night_focus_fill">#2C1715</color>
     <color name="brand_launcher_navy">#163065</color>
+    <color name="brand_launcher_white">#FFFFFF</color>
     <color name="brand_launcher_dot">#D9776D</color>
 </resources>

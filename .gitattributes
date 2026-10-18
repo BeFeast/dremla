@@ -4,3 +4,28 @@ gradlew text eol=lf
 *.bat text eol=crlf
 *.jar binary
 *.png binary
+
+# Brand-kit port (docs/kit-port.md): these files must keep their listed SHA-256 on every checkout,
+# so git never converts their line endings (the OFL texts mix CRLF and LF). The PNGs are covered
+# by *.png above. The manifest is parsed line by line and stays LF.
+app/src/main/assets/licenses/OFL-*.txt -text
+app/src/main/res/font/*.ttf binary
+app/src/main/java/com/befeast/sleepmusic/Fades.kt -text
+app/src/main/java/com/befeast/sleepmusic/Library.kt -text
+app/src/main/java/com/befeast/sleepmusic/ShuffleBag.kt -text
+app/src/main/java/com/befeast/sleepmusic/StartVolume.kt -text
+app/src/main/java/com/befeast/sleepmusic/ui/BrandTheme.kt -text
+app/src/main/res/drawable/ic_launcher_foreground.xml -text
+app/src/main/res/drawable/ic_launcher_monochrome.xml -text
+app/src/main/res/drawable/mark_night.xml -text
+app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml -text
+app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml -text
+app/src/main/res/values/colors.xml -text
+app/src/main/res/values/strings_brand.xml -text
+app/src/main/res/values/themes.xml -text
+app/src/test/java/com/befeast/sleepmusic/FadesTest.kt -text
+app/src/test/java/com/befeast/sleepmusic/LibraryTest.kt -text
+app/src/test/java/com/befeast/sleepmusic/RemainingTimeTest.kt -text
+app/src/test/java/com/befeast/sleepmusic/ShuffleBagTest.kt -text
+app/src/test/java/com/befeast/sleepmusic/StartVolumeTest.kt -text
+docs/kit-port.sha256 text eol=lf

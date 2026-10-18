@@ -63,6 +63,17 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # HTML only: the JUnit XML records the runner's host name (see docs/ci.md).
+      - name: Upload unit-test report (HTML)
+        if: always()
+        uses: https://code.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+        with:
+          name: unit-test-reports
+          path: |
+            app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Upload failure evidence (golden actual/diff images, lint and test reports)
         if: failure()
         uses: https://code.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
