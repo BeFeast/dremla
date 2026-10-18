@@ -22,6 +22,7 @@ val PlaceholderGround = Color(0xFF000000)
 data class PlaceholderState(
     /** Optional square in the top-left corner. Null in the shipped and reference state. */
     val marker: PlaceholderMarker? = null,
+    val message: String? = null,
 )
 
 /** A small, known change that tests can inject into the scene. */
@@ -31,6 +32,12 @@ data class PlaceholderMarker(val size: Dp, val color: Color)
 @Composable
 fun PlaceholderScene(state: PlaceholderState, modifier: Modifier = Modifier) {
     Box(modifier = modifier.fillMaxSize().background(PlaceholderGround)) {
+        state.message?.let {
+            androidx.compose.foundation.text.BasicText(
+                it, modifier = Modifier.align(Alignment.Center),
+                style = androidx.compose.ui.text.TextStyle(color = Color(0xFFAD7A5B)),
+            )
+        }
         state.marker?.let { marker ->
             Box(
                 modifier = Modifier

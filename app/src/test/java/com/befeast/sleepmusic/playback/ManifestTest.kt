@@ -48,13 +48,13 @@ class ManifestTest {
                 "android.permission.FOREGROUND_SERVICE",
                 "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
                 "android.permission.WAKE_LOCK",
+                "android.permission.INTERNET",
                 "android.permission.ACCESS_NETWORK_STATE",
                 "${app.packageName}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
             ),
             permissions,
         )
         listOf(
-            "android.permission.INTERNET",
             "android.permission.POST_NOTIFICATIONS",
             "android.permission.RECEIVE_BOOT_COMPLETED",
         ).forEach { assertFalse("does not request $it", it in permissions) }

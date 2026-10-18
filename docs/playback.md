@@ -1,5 +1,9 @@
 # Playback (issue #3)
 
+Issue #4 integration: [collection.md](collection.md) supersedes the local-only source, logcat-only
+events and pending-start/service-dump gaps described below. INTERNET is now deliberate. Service
+creation waits for a start or bind; a bounded diagnostic start never creates playback.
+
 Design of the playback service, the MediaSession and one-press autoplay for PRD contract items 1-4, 8, 9, the media-key part of item 7 and the preference part of item 13 (acceptance AC-2, AC-5, AC-6, AC-10). Later issues plug into the seams in [Seams](#seams-for-later-issues): #4 (collection download, refresh, night log, `dumpsys`), #5 (night screen, sleep routes, morning, `TV off`) and #6 (Compose TV UI).
 
 The ported pure logic (`Fades`, `ShuffleBag`, `StartVolume`, `Library`, `ui/RemainingTime.kt`) is used unchanged; new code wraps it from new files (see [kit-port.md](kit-port.md)).

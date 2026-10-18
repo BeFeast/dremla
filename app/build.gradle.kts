@@ -105,3 +105,24 @@ tasks.withType<Test>().configureEach {
     maxParallelForks = 1
     maxHeapSize = "2g"
 }
+
+// Inspect the resolved shipping graph, including transitives, for the privacy gate.
+tasks.register("writeRuntimeDependencies") {
+    val report = layout.buildDirectory.file("reports/privacy/runtime.txt")
+    outputs.file(report)
+    outputs.upToDateWhen { false }
+    doLast {
+        val coordinates = listOf("debugRuntimeClasspath", "releaseRuntimeClasspath").flatMap { name ->
+            val configuration = configurations.getByName(name)
+            val artifacts = configuration.resolvedConfiguration.resolvedArtifacts
+            val moduleFiles = artifacts.map { it.file }.toSet()
+            check(configuration.files.all { it in moduleFiles }) {
+                "Unreviewed local runtime file dependency"
+            }
+            artifacts.map {
+                "${it.moduleVersion.id.group}:${it.moduleVersion.id.name}"
+            }
+        }.distinct().sorted()
+        report.get().asFile.apply { parentFile.mkdirs(); writeText(coordinates.joinToString("\n", postfix = "\n")) }
+    }
+}

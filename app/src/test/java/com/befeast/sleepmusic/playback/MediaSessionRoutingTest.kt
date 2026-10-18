@@ -88,7 +88,9 @@ class MediaSessionRoutingTest {
 
     private fun startService(): PlaybackService {
         TestApp.graph = TestGraph(h.engine, inner)
-        val controller = Robolectric.buildService(PlaybackService::class.java).create()
+        val controller = Robolectric.buildService(PlaybackService::class.java).create().also {
+            it.get().onStartCommand(Intent(), 0, 1)
+        }
         services += controller
         idle()
         return controller.get()

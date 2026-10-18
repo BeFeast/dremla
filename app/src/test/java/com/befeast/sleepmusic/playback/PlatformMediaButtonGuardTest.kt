@@ -100,6 +100,7 @@ class PlatformMediaButtonGuardTest {
             }
             ShadowLog.clear()
             service.create()
+            service.get().onStartCommand(Intent(), 0, 1)
             val session = service.get().sessions.single()
             try {
                 assertSame(originalCallback, ReflectionHelpers.getField<Handler>(platform(session), "mCallback"))
@@ -130,7 +131,9 @@ class PlatformMediaButtonGuardTest {
         val h = EngineHarness()
         h.launcherStart()
         TestApp.graph = TestGraph(h.engine, FakeMediaPlayer())
-        val service = Robolectric.buildService(PlaybackService::class.java).create()
+        val service = Robolectric.buildService(PlaybackService::class.java).create().also {
+            it.get().onStartCommand(Intent(), 0, 1)
+        }
         try {
             val expected = h.port.upNext!!.trackId
             dispatch(platform(service.get().sessions.single()), app.packageName, "MSG_MEDIA_BUTTON",
@@ -148,7 +151,9 @@ class PlatformMediaButtonGuardTest {
         val h = EngineHarness()
         h.launcherStart()
         TestApp.graph = TestGraph(h.engine, FakeMediaPlayer())
-        val service = Robolectric.buildService(PlaybackService::class.java).create()
+        val service = Robolectric.buildService(PlaybackService::class.java).create().also {
+            it.get().onStartCommand(Intent(), 0, 1)
+        }
         try {
             val platform = platform(service.get().sessions.single())
             h.sleepThrough(h.state.timerEndAtMs - h.now)
@@ -172,7 +177,9 @@ class PlatformMediaButtonGuardTest {
         val h = EngineHarness()
         h.launcherStart()
         TestApp.graph = TestGraph(h.engine, FakeMediaPlayer())
-        val service = Robolectric.buildService(PlaybackService::class.java).create()
+        val service = Robolectric.buildService(PlaybackService::class.java).create().also {
+            it.get().onStartCommand(Intent(), 0, 1)
+        }
         try {
             val platform = platform(service.get().sessions.single())
             val expected = h.port.upNext!!.trackId
@@ -200,7 +207,9 @@ class PlatformMediaButtonGuardTest {
         val h = EngineHarness()
         h.launcherStart()
         TestApp.graph = TestGraph(h.engine, FakeMediaPlayer())
-        val service = Robolectric.buildService(PlaybackService::class.java).create()
+        val service = Robolectric.buildService(PlaybackService::class.java).create().also {
+            it.get().onStartCommand(Intent(), 0, 1)
+        }
         try {
             val platform = platform(service.get().sessions.single())
             val before = h.state
@@ -224,7 +233,9 @@ class PlatformMediaButtonGuardTest {
         val h = EngineHarness()
         h.launcherStart()
         TestApp.graph = TestGraph(h.engine, FakeMediaPlayer())
-        val service = Robolectric.buildService(PlaybackService::class.java).create()
+        val service = Robolectric.buildService(PlaybackService::class.java).create().also {
+            it.get().onStartCommand(Intent(), 0, 1)
+        }
         try {
             val expected = h.port.upNext!!.trackId
             dispatch(platform(service.get().sessions.single()), app.packageName, "MSG_NEXT", null)

@@ -19,6 +19,7 @@ import kotlinx.coroutines.SupervisorJob
  * service, and tests build the engine without a service.
  */
 interface PlaybackGraph {
+    val downloads: DownloadCollectionSource? get() = null
     val controls: PlaybackControls
 
     /** The player the MediaSession wraps ([SessionPlayer] in production). */
@@ -53,6 +54,15 @@ class AppPlaybackGraph internal constructor(
             .build()
     }
 
+    private val nightLog by lazy {
+        (app as? com.befeast.sleepmusic.SleepMusicApp)?.nightLog ?: NightLog(app)
+    }
+    override val downloads by lazy {
+        if (collectionSource != null) null else DownloadCollectionSource(
+            app, scope, keepId = { engine.state.value.track?.id }, onError = { nightLog.collectionError() },
+        )
+    }
+
     val engine: PlaybackEngine by lazy {
         PlaybackEngine(
             scope = scope,
@@ -60,9 +70,9 @@ class AppPlaybackGraph internal constructor(
             port = ExoPlayerPort { exoPlayer },
             audio = SystemAudioControl(app.getSystemService(AudioManager::class.java)),
             store = SharedPrefsPlaybackStore(app),
-            source = collectionSource ?: LocalCollectionSource(app, scope),
+            source = collectionSource ?: checkNotNull(downloads),
             host = ServicePlaybackHost(app),
-            events = LogcatSessionEvents(),
+            events = nightLog,
         )
     }
 

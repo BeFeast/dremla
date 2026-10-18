@@ -2,6 +2,7 @@ package com.befeast.sleepmusic
 
 import android.content.Context
 import android.util.Log
+import android.util.AtomicFile
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -64,11 +65,17 @@ object ManifestParser {
     }
 }
 
-/** Collection stored in app-private storage: files/collection/manifest.json and files/collection/audio/ID.opus. */
-class Library(context: Context) {
+/** Collection stored in app-private storage: files/collection/manifest.json and files/collection/audio/ID.SHA256.opus. */
+class Library internal constructor(
+    context: Context,
+    private val openOutput: (File) -> java.io.OutputStream = { it.outputStream() },
+    private val commitManifest: (File, File) -> Boolean = { from, to -> from.renameTo(to) },
+) {
     private val dir = File(context.filesDir, "collection")
     private val audioDir = File(dir, "audio")
+    private var fixtureMode = false
     private val manifestFile = File(dir, "manifest.json")
+    private val pendingManifest = AtomicFile(File(dir, "manifest.pending.json"))
 
     data class Progress(
         val fileIndex: Int,
@@ -89,7 +96,46 @@ class Library(context: Context) {
         null
     }
 
-    fun localFile(t: Track): File = File(audioDir, t.id + "." + t.file.substringAfterLast('.', "opus"))
+    fun localFile(t: Track): File {
+        require(t.id.matches(Regex("[A-Za-z0-9_-]+"))) { "invalid track id" }
+        val extension = t.file.substringAfterLast('.', "opus")
+        require(extension.matches(Regex("[A-Za-z0-9]+"))) { "invalid extension" }
+        val revision = if (t.sha256.matches(Regex("[a-f0-9]{64}"))) ".${t.sha256}" else ""
+        return File(audioDir, "${t.id}$revision.$extension")
+    }
+
+    /** Only before any collection is exposed in a new process; never during a refresh. */
+    internal fun pruneBeforePublication(manifest: Manifest?) {
+        // Pending state is advisory: malformed or unreadable state cannot invalidate the commit.
+        val pending = runCatching {
+            ManifestParser.parse(pendingManifest.openRead().use { it.readBytes().toString(Charsets.UTF_8) })
+                .also { selectedTracks(it, true) }
+        }.getOrNull()
+        val wanted = listOfNotNull(manifest, pending).flatMap { m ->
+            m.tracks.filter { it.id in m.selection.orEmpty() }.mapNotNull { t ->
+                runCatching {
+                    localFile(t).takeIf { it.isFile && (t.bytes <= 0 || it.length() == t.bytes) && sha256(it) == t.sha256 }?.name
+                }.getOrNull()
+            }
+        }.toSet()
+        audioDir.listFiles()?.forEach { if (it.name !in wanted) it.delete() }
+    }
+
+    private fun selectedTracks(manifest: Manifest, selectionOnly: Boolean): List<Track> {
+        val selected = if (selectionOnly) {
+            val ids = manifest.selection ?: throw IOException("missing selection")
+            if (ids.isEmpty() || ids.any { id -> manifest.tracks.none { it.id == id } }) {
+                throw IOException("invalid selection")
+            }
+            manifest.tracks.filter { it.id in ids }
+        } else manifest.tracks
+        if (manifest.tracks.map { it.id }.distinct().size != manifest.tracks.size) throw IOException("duplicate ids")
+        selected.forEach { t ->
+            if (!t.sha256.matches(Regex("[a-f0-9]{64}"))) throw IOException("missing or invalid sha256")
+            localFile(t)
+        }
+        return selected
+    }
 
     /** Cheap availability check; sha256 was verified when the file was written. */
     fun isAvailable(t: Track): Boolean {
@@ -101,21 +147,33 @@ class Library(context: Context) {
      * Blocking: call from Dispatchers.IO. Downloads <base>/manifest.json and every track file,
      * verifying sha256. Already-verified local files are kept. Throws if the manifest is unreachable.
      */
-    fun refresh(baseUrl: String, keepId: String?, onProgress: (Progress) -> Unit): RefreshResult {
+    fun refresh(baseUrl: String, keepId: String?, selectionOnly: Boolean = false, playingId: () -> String? = { keepId }, onProgress: (Progress) -> Unit): RefreshResult {
         val base = URL(if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/")
+        fixtureMode = base.host == "127.0.0.1"
         val manifestJson = String(fetchBytes(URL(base, "manifest.json")), Charsets.UTF_8)
         val manifest = ManifestParser.parse(manifestJson)
         audioDir.mkdirs()
 
-        val total = manifest.tracks.sumOf { it.bytes.coerceAtLeast(0) }
+        val selected = selectedTracks(manifest, selectionOnly)
+        // Persist recovery roots before any audio write. AtomicFile preserves the previous roots
+        // if this write fails or the process dies before it finishes.
+        val pendingOutput = pendingManifest.startWrite()
+        try {
+            pendingOutput.write(manifestJson.toByteArray(Charsets.UTF_8))
+            pendingManifest.finishWrite(pendingOutput)
+        } catch (e: Exception) {
+            pendingManifest.failWrite(pendingOutput)
+            throw e
+        }
+        val total = selected.sumOf { it.bytes.coerceAtLeast(0) }
         var done = 0L
         var ok = 0
         val failed = mutableListOf<String>()
-        manifest.tracks.forEachIndexed { i, t ->
-            onProgress(Progress(i + 1, manifest.tracks.size, done, total, t.title))
+        selected.forEachIndexed { i, t ->
+            onProgress(Progress(i + 1, selected.size, done, total, t.title))
             val dst = localFile(t)
             try {
-                if (dst.isFile && (t.sha256.isEmpty() || sha256(dst) == t.sha256)) {
+                if (dst.isFile && (t.bytes <= 0 || dst.length() == t.bytes) && sha256(dst) == t.sha256) {
                     done += t.bytes.coerceAtLeast(0)
                     ok++
                     return@forEachIndexed
@@ -123,9 +181,9 @@ class Library(context: Context) {
                 val tmp = File(audioDir, dst.name + ".part")
                 val startDone = done
                 val digest = download(URL(base, t.file), tmp) { n ->
-                    onProgress(Progress(i + 1, manifest.tracks.size, startDone + n, total, t.title))
+                    onProgress(Progress(i + 1, selected.size, startDone + n, total, t.title))
                 }
-                if (t.sha256.isNotEmpty() && digest != t.sha256) {
+                if (digest != t.sha256 || (t.bytes > 0 && tmp.length() != t.bytes)) {
                     tmp.delete()
                     throw IOException("sha256 mismatch for ${t.id}: got $digest")
                 }
@@ -133,23 +191,32 @@ class Library(context: Context) {
                 done = startDone + t.bytes.coerceAtLeast(0)
                 ok++
             } catch (e: Exception) {
+                File(audioDir, dst.name + ".part").delete()
                 Log.w(TAG, "track ${t.id} failed: ${e.message}")
                 failed += t.id
                 done += t.bytes.coerceAtLeast(0)
             }
         }
-        onProgress(Progress(manifest.tracks.size, manifest.tracks.size, total, total, ""))
+        onProgress(Progress(selected.size, selected.size, total, total, ""))
 
-        // Remove files that are no longer in the collection (never the one playing right now).
-        val wanted = manifest.tracks.map { localFile(it).name }.toSet()
-        audioDir.listFiles()?.forEach { f ->
-            val isKept = keepId != null && f.name.startsWith("$keepId.")
-            if (f.name !in wanted && !isKept) f.delete()
+        // A partial refresh must not replace a usable old collection. Verified files stay for retry.
+        if (selectionOnly && failed.isNotEmpty()) {
+            throw IOException("incomplete selection")
         }
         dir.mkdirs()
         val tmpManifest = File(dir, "manifest.json.part")
         tmpManifest.writeText(manifestJson)
-        tmpManifest.renameTo(manifestFile)
+        if (!commitManifest(tmpManifest, manifestFile)) throw IOException("manifest commit failed")
+        pendingManifest.delete()
+
+        // Remove files that are no longer in the collection (never the one playing right now).
+        val wanted = selected.map { localFile(it).name }.toSet()
+        // Production retains every revision until the next process startup, before publication.
+        // An idle observation cannot protect against a concurrent launcher start.
+        val idle = playingId() == null
+        if (!selectionOnly && idle) audioDir.listFiles()?.forEach { f ->
+            if (f.name !in wanted) f.delete()
+        }
         return RefreshResult(manifest, ok, failed)
     }
 
@@ -162,6 +229,7 @@ class Library(context: Context) {
     private fun open(url: URL): HttpURLConnection {
         var u = url
         repeat(MAX_REDIRECTS + 1) {
+            checkUrl(u, fixtureMode)
             val c = u.openConnection() as HttpURLConnection
             c.connectTimeout = 10_000
             c.readTimeout = 30_000
@@ -192,7 +260,7 @@ class Library(context: Context) {
         val c = open(url)
         try {
             c.inputStream.use { input ->
-                dst.outputStream().use { out ->
+                openOutput(dst).use { out ->
                     val buf = ByteArray(64 * 1024)
                     var n = 0L
                     var lastReport = 0L
@@ -231,6 +299,17 @@ class Library(context: Context) {
     private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 
     companion object {
+        const val BASE_URL = "https://html.me.uk/t/dremla/collection/"
+
+        /** Literal loopback is reserved for local fixture tests; production always uses BASE_URL. */
+        internal fun checkUrl(url: URL, allowLoopback: Boolean = false) {
+            val fixture = allowLoopback && url.host == "127.0.0.1"
+            if (!fixture && (url.protocol != "https" || url.host != "html.me.uk" || url.port !in listOf(-1, 443))) {
+                throw IOException("collection origin refused")
+            }
+            if (url.userInfo != null || url.protocol !in listOf("https", "http")) throw IOException("invalid collection URL")
+        }
+
         const val TAG = "SleepMusic"
         const val MAX_REDIRECTS = 5
         private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)

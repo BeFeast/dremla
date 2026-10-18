@@ -15,10 +15,10 @@ import com.befeast.sleepmusic.R
 
 /**
  * Android host of a night session: the foreground `mediaPlayback` service and the MediaSession.
- * It runs exactly while a session is active ([ServicePlaybackHost] starts and stops it). The
- * engine and the player are process-scoped and outlive it.
+ * [ServicePlaybackHost] starts and stops it with a night. A diagnostic start can also keep it
+ * alive for a bounded dump window without playback. The engine and player are process-scoped.
  *
- * The MediaSession is built on demand, from `onCreate`, `onStartCommand` or `onGetSession`, as
+ * The MediaSession is built on demand, from a normal `onStartCommand` or `onGetSession`, as
  * soon as a session is active, so an instance created while idle and kept alive by a bind still
  * gets it when a night starts. Without an active session the service touches no player, offers
  * no session and stops itself; it is never restarted by the system.
@@ -31,15 +31,40 @@ class PlaybackService : MediaSessionService() {
 
     private val graph: PlaybackGraph get() = (application as PlaybackProvider).playback
 
-    override fun onCreate() {
-        super.onCreate()
-        if (!ensureSession()) stopIdle()
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var diagnostic = false
+    private val diagnosticTimeout = Runnable {
+        diagnostic = false
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        val session = mediaSession
+        if (session == null || !graph.controls.state.value.isActive) stopSelf()
+        else onUpdateNotification(session, session.player.isPlaying)
+    }
+    private val nightLog by lazy {
+        (application as? com.befeast.sleepmusic.SleepMusicApp)?.nightLog ?: NightLog(this)
+    }
+
+    // onCreate deliberately touches neither graph nor player: the next intent may be diagnostics.
+    override fun onCreate() { super.onCreate() }
+
+    override fun dump(fd: java.io.FileDescriptor, writer: java.io.PrintWriter, args: Array<out String>) {
+        nightLog.dump(writer)
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
-        if (ensureSession()) mediaSession else null
+        if (diagnostic) null else if (ensureSession()) mediaSession else { stopIdle(); null }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_DIAGNOSTICS) {
+            diagnostic = mediaSession == null
+            // Every foreground-service start owes a promotion, including a demoted paused session.
+            startForeground(IDLE_NOTIFICATION_ID, idleNotification())
+            handler.removeCallbacks(diagnosticTimeout)
+            handler.postDelayed(diagnosticTimeout, DIAGNOSTIC_WINDOW_MS)
+            return START_NOT_STICKY
+        }
+        diagnostic = false
+        // Keep any diagnostic deadline: a normal start must not strand its notification.
         // Build the session first, so a media button in this intent finds it.
         val active = ensureSession()
         super.onStartCommand(intent, flags, startId)
@@ -48,11 +73,12 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        graph.controls.stop(CommandSource.System)
+        if (!diagnostic) graph.controls.stop(CommandSource.System)
         stopSelf()
     }
 
     override fun onDestroy() {
+        handler.removeCallbacks(diagnosticTimeout)
         mediaSession?.release()
         mediaSession = null
         super.onDestroy()
@@ -118,6 +144,8 @@ class PlaybackService : MediaSessionService() {
     )
 
     companion object {
+        const val ACTION_DIAGNOSTICS = "com.befeast.sleepmusic.action.DUMP_NIGHT_LOG"
+        const val DIAGNOSTIC_WINDOW_MS = 60_000L
         const val SESSION_ID = "night"
 
         /** Only for the instant foreground of [stopIdle]; Media3's media notification uses its own. */

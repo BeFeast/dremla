@@ -9,6 +9,8 @@
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Playback service in the foreground while a night session runs (docs/playback.md). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
@@ -18,6 +20,7 @@
     <!-- Preferences never leave the device: no cloud backup, no device-to-device transfer. -->
     <application
         android:name=".SleepMusicApp"
+        android:usesCleartextTraffic="false"
         android:allowBackup="false"
         android:banner="@drawable/tv_banner"
         android:dataExtractionRules="@xml/data_extraction_rules"

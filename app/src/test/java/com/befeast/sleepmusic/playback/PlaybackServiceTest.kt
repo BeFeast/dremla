@@ -52,7 +52,9 @@ class PlaybackServiceTest {
 
     private fun create(graph: TestGraph): PlaybackService {
         TestApp.graph = graph
-        val controller = Robolectric.buildService(PlaybackService::class.java).create()
+        val controller = Robolectric.buildService(PlaybackService::class.java).create().also {
+            it.get().onStartCommand(Intent(), 0, 1)
+        }
         services += controller
         return controller.get()
     }
@@ -124,4 +126,53 @@ class PlaybackServiceTest {
         controls.mutableState.value = SessionState(phase = Phase.Finished, endReason = EndReason.TimerEnded)
         assertNull("no session for anyone after the end", service.onGetSession(anyController))
     }
+    @Test
+    fun diagnosticActionDuringPlaybackLeavesExistingSessionUntouched() {
+        val controls = RecordingControls(SessionState(phase = Phase.Playing))
+        val graph = TestGraph(controls, FakeMediaPlayer())
+        val service = create(graph)
+        val session = service.sessions.single()
+        assertEquals(Service.START_NOT_STICKY,
+            service.onStartCommand(Intent(PlaybackService.ACTION_DIAGNOSTICS), 0, 2))
+        assertSame(session, service.sessions.single())
+        assertEquals(1, graph.sessionPlayerRequests)
+        assertTrue(controls.calls.isEmpty())
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(PlaybackService.DIAGNOSTIC_WINDOW_MS))
+        assertFalse(shadowOf(service).isStoppedBySelf)
+    }
+
+    @Test fun diagnosticsPromoteDemotedPausedAndFinishedSessionsWithoutTransportChanges() {
+        for (phase in listOf(Phase.Playing, Phase.Paused, Phase.Finished)) {
+            val controls = RecordingControls(SessionState(phase = Phase.Playing))
+            val player = FakeMediaPlayer().apply {
+                setMediaItem(androidx.media3.common.MediaItem.fromUri("asset:///fixture.opus"))
+                prepare()
+                if (phase == Phase.Playing) play()
+            }
+            val graph = TestGraph(controls, player)
+            val service = create(graph)
+            val session = service.sessions.single()
+            controls.mutableState.value = SessionState(phase = phase)
+            val playerCalls = player.calls.toList()
+            val before = controls.state.value
+            service.stopForeground(Service.STOP_FOREGROUND_REMOVE)
+            assertNull(shadowOf(service).lastForegroundNotification)
+            service.onStartCommand(Intent(PlaybackService.ACTION_DIAGNOSTICS), 0, 2)
+            assertEquals(PlaybackService.IDLE_NOTIFICATION_ID, shadowOf(service).lastForegroundNotificationId)
+            assertNotNull(shadowOf(service).lastForegroundNotification)
+            assertSame(session, service.sessions.single())
+            assertSame(before, controls.state.value)
+            assertTrue(controls.calls.isEmpty())
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(PlaybackService.DIAGNOSTIC_WINDOW_MS))
+            assertTrue("diagnostic notification removed", shadowOf(service).lastForegroundNotificationId != PlaybackService.IDLE_NOTIFICATION_ID || shadowOf(service).lastForegroundNotification == null)
+            assertEquals(playerCalls, player.calls)
+            assertEquals(phase == Phase.Playing, player.isPlaying)
+            assertEquals(phase == Phase.Finished, shadowOf(service).isStoppedBySelf)
+            assertSame(before, controls.state.value)
+            assertTrue(controls.calls.isEmpty())
+            services.removeAll { it.get() === service }
+            service.onDestroy()
+        }
+    }
+
 }

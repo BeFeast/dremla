@@ -2,7 +2,7 @@ package com.befeast.sleepmusic.playback
 
 import android.util.Log
 
-/** Session milestones. #4 implements this for the night log; until then they go to logcat. */
+/** Session milestones, persisted by NightLog in production. */
 interface SessionEvents {
     fun uiEntry(verdict: LaunchVerdict) {}
     fun sessionStarted(sessionId: Int, timerMinutes: Int, startVolume: StartVolumeResult) {}

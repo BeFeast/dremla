@@ -42,7 +42,9 @@ class NoAutoplayPathsTest {
     @Test
     fun theSystemNeverRestartsThePlaybackService() {
         TestApp.graph = TestGraph(RecordingControls(SessionState(phase = Phase.Playing)), FakeMediaPlayer())
-        val controller = Robolectric.buildService(PlaybackService::class.java).create()
+        val controller = Robolectric.buildService(PlaybackService::class.java).create().also {
+            it.get().onStartCommand(Intent(), 0, 1)
+        }
         assertEquals(Service.START_NOT_STICKY, controller.get().onStartCommand(null, 0, 1))
         assertEquals(Service.START_NOT_STICKY, controller.get().onStartCommand(Intent(), Service.START_FLAG_REDELIVERY, 2))
         controller.destroy()
@@ -52,7 +54,9 @@ class NoAutoplayPathsTest {
     fun aServiceCreatedWithoutASessionTouchesNoPlayerAndStopsItself() {
         val graph = TestGraph(RecordingControls(), FakeMediaPlayer())
         TestApp.graph = graph
-        val controller = Robolectric.buildService(PlaybackService::class.java).create()
+        val controller = Robolectric.buildService(PlaybackService::class.java).create().also {
+            it.get().onStartCommand(Intent(), 0, 1)
+        }
         val service = controller.get()
         assertTrue(shadowOf(service).isStoppedBySelf)
         assertEquals(0, graph.sessionPlayerRequests)

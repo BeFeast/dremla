@@ -120,7 +120,7 @@ echo "verify-outcome: scope=$scope gradle-max-workers=$workers"
 # lintDebug still writes its report for the failure-evidence artifact; any failed task still
 # makes the call exit non-zero.
 run_stage "gradle-build-test-golden-lint" \
-  "${gradle[@]}" --continue clean assembleDebug assembleRelease verifyRoborazziDebug lintDebug
+  "${gradle[@]}" --continue clean assembleDebug assembleRelease verifyRoborazziDebug lintDebug writeRuntimeDependencies
 unit_test_summary
 run_stage "inspect-release-apk" \
   env DREMLA_APK="$RELEASE_APK" DREMLA_APK_REQUIRE_SIGNED=0 scripts/inspect-apk.sh
@@ -132,6 +132,8 @@ run_stage "forbidden-apis-self-test" scripts/test-forbidden-apis.sh
 run_stage "forbidden-apis" scripts/check-forbidden-apis.sh
 run_stage "kit-port-self-test" scripts/test-kit-port.sh
 run_stage "kit-port" scripts/check-kit-port.sh
+run_stage "privacy-self-test" scripts/test-privacy.sh
+run_stage "privacy" scripts/check-privacy.sh
 run_stage "signing-self-test" scripts/test-signing.sh
 
 if [[ "$scope" == "full" ]]; then

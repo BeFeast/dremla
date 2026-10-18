@@ -18,9 +18,9 @@ data class PlayableCollection(val tracks: List<Track>, val selection: List<Strin
 }
 
 /**
- * The collection seam. #3 reads the local app-private collection; #4 replaces the source with the
- * download and refresh. `collection` is null until the first load finishes; a launcher start
- * that arrives earlier waits for it.
+ * The collection seam. Production uses DownloadCollectionSource for offline load and refresh.
+ * `collection` is null until local load or first download succeeds; a launcher start that arrives
+ * earlier waits for it, including through first-run failure and explicit retry.
  */
 interface CollectionSource {
     val collection: StateFlow<PlayableCollection?>

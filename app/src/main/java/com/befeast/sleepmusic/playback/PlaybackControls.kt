@@ -11,6 +11,8 @@ enum class CommandSource { Remote, MediaSession, System, Menu }
  * [onUiEntry] do nothing unless a session is active, whatever their source.
  */
 interface PlaybackControls {
+    /** Cancels only a launcher request waiting for the first collection. */
+    fun cancelPendingStart() {}
     val state: StateFlow<SessionState>
 
     /** The only way a session starts: a launcher start while no session is active. */

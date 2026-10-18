@@ -213,6 +213,8 @@ class PlaybackEngine(
         }
     }
 
+    override fun cancelPendingStart() { pendingStart = false }
+
     override fun stop(source: CommandSource) {
         pendingStart = false
         if (session != null) finish(EndReason.Stopped)

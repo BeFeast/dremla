@@ -6,6 +6,8 @@ import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.collectAsState
+import com.befeast.sleepmusic.playback.CollectionPhase
 import com.befeast.sleepmusic.playback.CommandSource
 import com.befeast.sleepmusic.playback.LaunchClassifier
 import com.befeast.sleepmusic.playback.LaunchEntry
@@ -30,7 +32,16 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         volumeControlStream = AudioManager.STREAM_MUSIC
         setContent {
-            PlaceholderScene(PlaceholderState())
+            val downloads = (application as PlaybackProvider).playback.downloads
+            val status = downloads?.status?.collectAsState()?.value
+            val message = when (status?.phase) {
+                CollectionPhase.Loading -> "Loading collection…"
+                CollectionPhase.Downloading -> "Downloading collection ${status.progress?.fileIndex ?: 0}/${status.progress?.fileCount ?: 0}"
+                CollectionPhase.FirstRunError -> "Collection unavailable. Check your connection and press OK to retry."
+                CollectionPhase.RefreshError -> "Refresh failed. Your saved collection is still available."
+                else -> null
+            }
+            PlaceholderScene(PlaceholderState(message = message))
         }
         controls.onUiEntry(LaunchClassifier.classify(launchSignal(intent, LaunchEntry.Create, savedInstanceState)))
     }
@@ -62,7 +73,18 @@ class MainActivity : ComponentActivity() {
     override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean =
         RemoteKeyMap.consumesLongPress(keyCode) || super.onKeyLongPress(keyCode, event)
 
+    override fun onStop() {
+        // Leaving during the first download cancels the launch intent, never an active night.
+        controls.cancelPendingStart()
+        super.onStop()
+    }
+
     private fun run(command: RemoteCommand) {
+        val downloads = (application as PlaybackProvider).playback.downloads
+        if (command == RemoteCommand.TogglePause && downloads?.status?.value?.phase == CollectionPhase.FirstRunError) {
+            downloads.refresh()
+            return
+        }
         when (command) {
             RemoteCommand.TogglePause -> controls.togglePause(CommandSource.Remote)
             RemoteCommand.Play -> controls.play(CommandSource.Remote)
