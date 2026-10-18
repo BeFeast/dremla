@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Placeholder: the brand kit replaces this file with the full token set (docs/design-contract.md). -->
+<resources>
+    <color name="brand_launcher_navy">#163065</color>
+    <color name="brand_launcher_dot">#D9776D</color>
+</resources>

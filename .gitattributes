@@ -1,0 +1,6 @@
+# Line endings for the Gradle wrapper scripts; binaries are never diffed.
+gradlew text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.jar binary
+*.png binary

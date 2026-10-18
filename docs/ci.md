@@ -1,0 +1,81 @@
+# CI
+
+The merge gate is `.forgejo/workflows/ci.yml`. It runs on every pull request and on pushes to `main`. A newer push to the same pull request cancels the older run. A `main` build that is already running is not interrupted by a newer push; a `main` run still waiting in the queue may be replaced by the newer one.
+
+## Runner
+
+- Forgejo Actions, one job, `runs-on: heavy`: the org's host-mode runner (label `heavy`). Jobs run directly on the runner host, not in a container.
+- Timeout 45 minutes.
+
+## Toolchain
+
+The toolchain comes from the runner environment, not from the workflow:
+
+- `ANDROID_HOME=/opt/android-sdk` with `platforms/android-34` and `build-tools/34.0.0`.
+- `JAVA_HOME` pointing to JDK 17.
+- Gradle 8.7 through the wrapper; `gradle/wrapper/gradle-wrapper.properties` pins `distributionSha256Sum` to the official checksum of `gradle-8.7-bin.zip`.
+- The Gradle and Maven caches in the runner user's home persist between runs.
+
+Jobs never install SDK packages, never run `sdkmanager` and never accept licences. The first workflow step only prints and checks `ANDROID_HOME`, `JAVA_HOME`, the Java version, the platform and the build tools. If something is missing, the job fails with a message; report it on the issue instead of changing the workflow. No `local.properties` is needed: the Android Gradle Plugin reads `ANDROID_HOME`.
+
+`gradle.properties` sets `android.builder.sdkDownload=false`. Without it the Android Gradle Plugin downloads a missing SDK component (a platform or build tools) on its own whenever the licences are accepted on the host; with it, a missing component fails the build instead.
+
+## CPU caps
+
+The runner host also serves other CI, and one unrestricted build there once pushed the load average to about 270. So:
+
+- The workflow runs `scripts/verify-outcome.sh` under `nice -n 19`; every Gradle process inherits that priority.
+- The workflow sets `DREMLA_GRADLE_MAX_WORKERS=4`, and every Gradle call in the scripts passes `--max-workers=${DREMLA_GRADLE_MAX_WORKERS:-2}`.
+- `gradle.properties` turns off the Gradle daemon and runs the Kotlin compiler in-process, so nothing outlives the build. Unit tests run in one JVM (`maxParallelForks = 1`, 2 GB heap).
+
+Locally, run one Gradle build at a time under `nice -n 15`; the scripts default to 2 workers.
+
+## What the job runs
+
+`DREMLA_OUTCOME_SCOPE=repo scripts/verify-outcome.sh`, which runs every stage, prints a summary table and exits non-zero if any stage failed:
+
+1. `gradle-build-test-golden-lint`: `./gradlew --no-daemon --max-workers=N --continue clean assembleDebug assembleRelease verifyRoborazziDebug lintDebug`. One Gradle call, so the unit tests run once: `verifyRoborazziDebug` depends on `testDebugUnitTest` and runs it in verify mode, where a golden mismatch fails its scene test. Lint aborts on errors; `assembleRelease` also runs `lintVitalRelease`. `--continue` keeps the other tasks running after a failure, so a failing unit test, golden scene or `lintVitalRelease` still leaves the `lintDebug` report for the artifact, and the call still exits non-zero.
+2. `scripts/inspect-apk.sh` on the unsigned release APK: applicationId `com.befeast.sleepmusic`, minSdk 28, targetSdk 34, no `lib/**` entries; prints versionCode, versionName and the signing certificate (`none (unsigned APK)` for the release build).
+3. `scripts/inspect-apk.sh` on the debug APK, which must be signed (debug key).
+4. `scripts/test-hygiene.sh`: self-test of the hygiene check against fixtures generated at runtime.
+5. `scripts/check-public-hygiene.sh`, over the content of tracked text files and the path names of all tracked files, binary ones included:
+   - no home-directory paths (the home root followed by a slash anywhere, URLs included; content only);
+   - no RFC 1918 addresses: a full 10/8 address, and 192.168/16 or 172.16/12 as soon as the third octet starts, so partial addresses and dotted hosts in the nip.io style count;
+   - no device endpoints: an IPv4 address with any port, and a host name or bracketed IPv6 literal with the adb port or a five-digit port (wireless debugging on Android 11 and later uses random five-digit ports). Each endpoint on a line is checked on its own; loopback (127/8, `0.0.0.0`, `localhost`, `[::1]`, `[::]`) is allowed;
+   - no private orchestrator state paths (its dot-directory as a path segment, its database file), in content or in names.
+6. `scripts/test-forbidden-apis.sh`: self-test of the forbidden-API check against sources generated at runtime.
+7. `scripts/check-forbidden-apis.sh`: no Compose path iteration in `app/src/main` (see [Native libraries](#native-libraries)).
+
+The default scope (`full`, used outside CI) adds a device-identity stage. It prints `device identity: not configured (enabled by the install issue)` and does not fail until the install issue wires it up. Unknown scope values fail.
+
+## Artifacts
+
+- `verify-outcome-log`, always: the full output of the script, including the APK inspection. Kept 7 days.
+- `failure-evidence`, only when the job fails: `app/build/outputs/roborazzi` (for every changed scene `<name>_actual.png` and `<name>_compare.png`, which shows reference, diff and new side by side) and `app/build/reports` (lint, unit-test and Roborazzi reports). Kept 7 days.
+
+## Golden scenes
+
+- Scenes are JVM tests: Robolectric with native graphics, `sdk = 34`, qualifiers `w960dp-h540dp-land-television-xhdpi`, which is 1920x1080 px. The harness (`app/src/test/java/com/befeast/sleepmusic/ui/Goldens.kt`) asserts that the captured frame is exactly 1920x1080 before handing it to Roborazzi.
+- State is injected: a scene composable takes its state as a parameter, and the test passes a fixed state.
+- References are committed under `app/src/test/screenshots/`. `verifyRoborazziDebug` compares strictly: a pixel counts as changed if its colour differs at all, and one changed pixel fails the scene. Actual and compare images go to `app/build/outputs/roborazzi`, never next to the references.
+- Plain `testDebugUnitTest` runs the scene tests without comparing images; `verify-outcome.sh` runs them only through `verifyRoborazziDebug`.
+- `recordRoborazziDebug` rewrites the references. Run it only in a reviewed design PR, commit the new PNGs and show the diff in that PR.
+
+## Native libraries
+
+Compose depends on `androidx.graphics:graphics-path`, which ships `libandroidx.graphics.path.so` for every ABI. The APK must not contain `lib/**` entries, so `app/build.gradle.kts` excludes the library with `packaging.jniLibs.excludes`.
+
+Consequence on every API level, the API 34 target box included: `androidx.graphics.path.PathIteratorImpl` calls `System.loadLibrary("androidx.graphics.path")` in its static initializer, whichever implementation the device gets, and its conic conversion is native code too. So any Compose path iteration throws `UnsatisfiedLinkError` at runtime on every device: `Path.iterator()` (and the `PathSegment` values it yields), `PathEasing`, `PathHitTester`, `Path.toSvg()` and `Path.divide()`. App code must not use them.
+
+`scripts/check-forbidden-apis.sh` enforces this with a token grep over the Kotlin and Java sources in `app/src/main`: `PathEasing`, `PathHitTester`, `PathIterator`, `PathSegment`, `androidx.graphics.path`, `toSvg(` and `.divide(` (on any receiver). It cannot see a library that iterates paths internally, so check a new dependency for these APIs too.
+
+## Versions
+
+`versionCode` 1 and `versionName` 0.1.0 are defaults. The release workflow overrides them with `-Pdremla.versionCode=<int>` and `-Pdremla.versionName=<semver>`.
+
+## Running locally
+
+```bash
+nice -n 15 ./gradlew --no-daemon --max-workers=2 --continue clean assembleDebug assembleRelease verifyRoborazziDebug lintDebug
+DREMLA_OUTCOME_SCOPE=repo nice -n 15 scripts/verify-outcome.sh
+```

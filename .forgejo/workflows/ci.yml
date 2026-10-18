@@ -1,0 +1,75 @@
+# Merge gate: clean build, unit tests, lint, golden scenes, APK inspection and public hygiene.
+# See docs/ci.md for the runner, the toolchain source and the CPU caps.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: verify-outcome (repo scope)
+    runs-on: heavy
+    timeout-minutes: 45
+    env:
+      # Every Gradle call in scripts/verify-outcome.sh passes --max-workers=$DREMLA_GRADLE_MAX_WORKERS.
+      DREMLA_GRADLE_MAX_WORKERS: "4"
+    steps:
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Toolchain from the runner environment (no installs)
+        run: |
+          missing() {
+            echo "Toolchain problem on the runner: $*" >&2
+            echo "Jobs never install SDK packages or accept licences. Report this on the issue." >&2
+            exit 1
+          }
+          [[ -n "${ANDROID_HOME:-}" ]] || missing "ANDROID_HOME is not set"
+          [[ -n "${JAVA_HOME:-}" ]] || missing "JAVA_HOME is not set"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "JAVA_HOME=$JAVA_HOME"
+          [[ -x "$JAVA_HOME/bin/java" ]] || missing "no java at \$JAVA_HOME/bin/java"
+          java_version="$("$JAVA_HOME/bin/java" -version 2>&1)"
+          echo "$java_version"
+          [[ "$java_version" == *'version "17'* ]] || missing "JDK 17 is required"
+          [[ -f "$ANDROID_HOME/platforms/android-34/android.jar" ]] || missing "platforms/android-34 is not installed"
+          for tool in aapt2 apksigner zipalign; do
+            [[ -x "$ANDROID_HOME/build-tools/34.0.0/$tool" ]] || missing "build-tools/34.0.0/$tool is not installed"
+          done
+          echo "platforms/android-34 and build-tools/34.0.0: present"
+
+      - name: Verify outcome (host checks, nice -n 19)
+        run: |
+          mkdir -p ci-out
+          nice -n 19 env DREMLA_OUTCOME_SCOPE=repo scripts/verify-outcome.sh 2>&1 | tee ci-out/verify-outcome.log
+
+      - name: Upload verify-outcome log (includes APK inspection)
+        if: always()
+        uses: https://code.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+        with:
+          name: verify-outcome-log
+          path: ci-out/verify-outcome.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload failure evidence (golden actual/diff images, lint and test reports)
+        if: failure()
+        uses: https://code.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+        with:
+          name: failure-evidence
+          path: |
+            app/build/outputs/roborazzi
+            app/build/reports
+          if-no-files-found: ignore
+          retention-days: 7
