@@ -235,6 +235,9 @@ secrets_url+="&secretPath=%2Fdremla%2Frelease%2Fsigning"
 secrets_url+="&expandSecretReferences=false&include_imports=false&recursive=false"
 case "$url" in
   "$STUB_API/v1/auth/universal-auth/login")
+    # Like real curl, read the whole request body before answering; otherwise the writer
+    # upstream of the pipe can get SIGPIPE and the case fails with exit 141 instead of HTTP 500.
+    if [[ "$data" == "@-" ]]; then login_body="$(cat)"; else login_body=""; fi
     if [[ "$method" != POST || "$data" != "@-" ||
       " ${headers[*]-} " != *" Content-Type: application/json "* ]]; then
       status=400
@@ -242,7 +245,7 @@ case "$url" in
     elif [[ -n "${STUB_LOGIN_STATUS:-}" ]]; then
       status="$STUB_LOGIN_STATUS"
       body='{"statusCode":'"$status"',"message":"Stub error"}'
-    elif jq -e --rawfile id "$fixtures/client_id" --rawfile secret "$fixtures/client_secret" \
+    elif printf '%s' "$login_body" | jq -e --rawfile id "$fixtures/client_id" --rawfile secret "$fixtures/client_secret" \
       '(keys == ["clientId", "clientSecret"]) and .clientId == $id and .clientSecret == $secret' \
       >/dev/null 2>&1; then
       status=200
