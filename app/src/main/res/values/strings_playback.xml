@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Notification channel of the instant foreground an idle playback service enters before it stops (API 30 and lower). -->
+    <string name="playback_idle_channel_name">Playback service</string>
+</resources>

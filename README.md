@@ -7,6 +7,7 @@ Android TV bedtime-music app. One press on the remote starts soft ambient or cal
 - Agent rules: [AGENTS.md](AGENTS.md)
 - Build, CI and golden scenes: [docs/ci.md](docs/ci.md)
 - Brand-kit port and its SHA-256 check: [docs/kit-port.md](docs/kit-port.md)
+- Playback service, MediaSession and one-press autoplay: [docs/playback.md](docs/playback.md)
 
 ## Build
 

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-feature
         android:name="android.software.leanback"
@@ -8,17 +9,29 @@
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
+    <!-- Playback service in the foreground while a night session runs (docs/playback.md). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- ExoPlayer keeps the CPU awake while it plays local files (C.WAKE_MODE_LOCAL). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Preferences never leave the device: no cloud backup, no device-to-device transfer. -->
     <application
+        android:name=".SleepMusicApp"
         android:allowBackup="false"
         android:banner="@drawable/tv_banner"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
-        android:theme="@style/Theme.SleepMusic">
+        android:theme="@style/Theme.SleepMusic"
+        tools:targetApi="31">
 
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -26,6 +39,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Exported so system controllers can bind. No MEDIA_BUTTON filter and no media button
+             receiver anywhere: on API 31+ a media button cannot start a dead process. -->
+        <service
+            android:name=".playback.PlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
     </application>
 
 </manifest>
