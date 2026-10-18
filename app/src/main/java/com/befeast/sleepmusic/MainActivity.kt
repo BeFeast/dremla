@@ -4,6 +4,12 @@ import android.content.Intent
 import android.media.AudioManager
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.WindowManager
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.collectAsState
@@ -16,8 +22,8 @@ import com.befeast.sleepmusic.playback.PlaybackProvider
 import com.befeast.sleepmusic.playback.RemoteCommand
 import com.befeast.sleepmusic.playback.RemoteKeyMap
 import com.befeast.sleepmusic.playback.launchSignal
+import com.befeast.sleepmusic.ui.nightPlaceholder
 import com.befeast.sleepmusic.ui.PlaceholderScene
-import com.befeast.sleepmusic.ui.PlaceholderState
 
 /**
  * Launcher entry point (`singleTask`, so a tile press on an existing task arrives in
@@ -31,7 +37,19 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         volumeControlStream = AudioManager.STREAM_MUSIC
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).hide(WindowInsetsCompat.Type.systemBars())
+        controls.onUiEntry(LaunchClassifier.classify(launchSignal(intent, LaunchEntry.Create, savedInstanceState)))
+        lifecycleScope.launch {
+            controls.state.collect { state ->
+                // Normal idle/screensaver only; inattentive sleep is an install prerequisite (night.md).
+                if (state.isActive) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                if (state.closeActivity) finishAndRemoveTask()
+            }
+        }
         setContent {
+            val session = controls.state.collectAsState().value
             val downloads = (application as PlaybackProvider).playback.downloads
             val status = downloads?.status?.collectAsState()?.value
             val message = when (status?.phase) {
@@ -41,9 +59,13 @@ class MainActivity : ComponentActivity() {
                 CollectionPhase.RefreshError -> "Refresh failed. Your saved collection is still available."
                 else -> null
             }
-            PlaceholderScene(PlaceholderState(message = message))
+            PlaceholderScene(nightPlaceholder(session, message))
         }
-        controls.onUiEntry(LaunchClassifier.classify(launchSignal(intent, LaunchEntry.Create, savedInstanceState)))
+    }
+
+    override fun onResume() {
+        super.onResume()
+        controls.refreshSleepRoute()
     }
 
     override fun onNewIntent(intent: Intent) {

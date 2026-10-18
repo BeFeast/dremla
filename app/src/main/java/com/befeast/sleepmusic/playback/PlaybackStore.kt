@@ -15,6 +15,9 @@ interface PlaybackStore {
     fun bag(): BagState
     fun saveBag(state: BagState)
 
+    /** End-of-night sleep preference; default on. */
+    var tvOff: Boolean
+
     /** Sanitised to [SleepTimer.CHOICES]; default 120. */
     var timerMinutes: Int
 

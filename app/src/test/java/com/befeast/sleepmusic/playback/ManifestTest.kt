@@ -70,7 +70,40 @@ class ManifestTest {
         assertTrue(MergedManifest.elements("action").none { it.android("name") == Intent.ACTION_MEDIA_BUTTON })
         assertTrue(MergedManifest.elements("receiver").none { it.android("name").endsWith("MediaButtonReceiver") })
         val services = MergedManifest.elements("service").map { it.android("name") }
-        assertEquals(listOf(PlaybackService::class.java.name), services)
+        assertEquals(setOf(PlaybackService::class.java.name, NightAccessibilityService::class.java.name), services.toSet())
+    }
+
+    @Test
+    fun sleepComponentsRequireSystemBindingPermissions() {
+        val service = pm.getServiceInfo(ComponentName(app, NightAccessibilityService::class.java), PackageManager.GET_META_DATA)
+        assertEquals("android.permission.BIND_ACCESSIBILITY_SERVICE", service.permission)
+        assertTrue(service.exported)
+        assertTrue(service.metaData.getInt("android.accessibilityservice") != 0)
+        val receiver = pm.getReceiverInfo(ComponentName(app, NightAdminReceiver::class.java), PackageManager.GET_META_DATA)
+        assertEquals("android.permission.BIND_DEVICE_ADMIN", receiver.permission)
+        assertTrue(receiver.exported)
+        assertTrue(receiver.metaData.getInt("android.app.device_admin") != 0)
+        assertEquals(listOf(NightAdminReceiver::class.java.name, "androidx.profileinstaller.ProfileInstallReceiver"),
+            MergedManifest.elements("receiver").map { it.android("name") })
+    }
+
+    @Test
+    fun sleepConfigurationsRequestNoEventsOrContentAndOnlyForceLock() {
+        val ns = "http://schemas.android.com/apk/res/android"
+        app.resources.getXml(com.befeast.sleepmusic.R.xml.night_accessibility).use { xml ->
+            while (xml.next() != org.xmlpull.v1.XmlPullParser.START_TAG) Unit
+            assertEquals("accessibility-service", xml.name)
+            assertEquals("false", xml.getAttributeValue(ns, "canRetrieveWindowContent"))
+            assertEquals(null, xml.getAttributeValue(ns, "accessibilityEventTypes"))
+            assertEquals(null, xml.getAttributeValue(ns, "accessibilityFlags"))
+        }
+        val tags = mutableListOf<String>()
+        app.resources.getXml(com.befeast.sleepmusic.R.xml.night_admin).use { xml ->
+            while (xml.next() != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                if (xml.eventType == org.xmlpull.v1.XmlPullParser.START_TAG) tags += xml.name
+            }
+        }
+        assertEquals(listOf("device-admin", "uses-policies", "force-lock"), tags)
     }
 
     @Test

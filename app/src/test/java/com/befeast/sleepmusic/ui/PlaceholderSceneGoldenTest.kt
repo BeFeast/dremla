@@ -17,6 +17,28 @@ class PlaceholderSceneGoldenTest {
     val compose = createComposeRule()
 
     @Test
+    fun nightBlackSuppressesCollectionAndRouteText() {
+        compose.setContent {
+            PlaceholderScene(nightPlaceholder(
+                com.befeast.sleepmusic.playback.SessionState(
+                    phase = com.befeast.sleepmusic.playback.Phase.Playing, blackScreen = true),
+                "Refresh failed"))
+        }
+        compose.onRoot().captureGolden("placeholder-black.png")
+    }
+
+    @Test
+    fun finishedSuppressesEveryMessage() {
+        compose.setContent {
+            PlaceholderScene(nightPlaceholder(
+                com.befeast.sleepmusic.playback.SessionState(
+                    phase = com.befeast.sleepmusic.playback.Phase.Finished),
+                "Refresh failed"))
+        }
+        compose.onRoot().captureGolden("placeholder-black.png")
+    }
+
+    @Test
     fun placeholderBlack() {
         compose.setContent { PlaceholderScene(PlaceholderState()) }
         compose.onRoot().captureGolden("placeholder-black.png")

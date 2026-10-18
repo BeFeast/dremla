@@ -2,16 +2,19 @@ package com.befeast.sleepmusic.playback
 
 import android.content.Context
 import android.util.AtomicFile
+import android.provider.Settings
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.PrintWriter
 
-/** App-private, bounded journal. Never records exception messages, paths, URIs or device details. */
+/** App-private, bounded journal. Never records exception messages, paths, URIs or device identifiers. */
 class NightLog(context: Context, private val now: () -> Long = System::currentTimeMillis) : SessionEvents {
+    private val resolver = context.applicationContext.contentResolver
     private val file = AtomicFile(File(context.filesDir, "night-log.json"))
     private var nights = read()
     private var current: JSONObject? = null
+    private var endedSession: Pair<Int, JSONObject>? = null
     private var writeFailed = false
 
     init {
@@ -31,8 +34,18 @@ class NightLog(context: Context, private val now: () -> Long = System::currentTi
         night.put("volume", JSONObject().put("before", startVolume.before).put("after", startVolume.after)
             .put("mutedAfter", startVolume.mutedAfter).put("fixed", startVolume.fixed))
         if (startVolume.error != null) night.getJSONArray("events").put(event("error", "StartVolumeFailed"))
+        night.put("powerTimeouts", JSONObject().apply {
+            for (key in listOf("attentive_timeout", "sleep_timeout", "screen_off_timeout")) {
+                val value = try {
+                    if (key == "screen_off_timeout") Settings.System.getString(resolver, key)
+                    else Settings.Secure.getString(resolver, key)
+                } catch (_: SecurityException) { null }
+                put(key, value?.toLongOrNull() ?: JSONObject.NULL)
+            }
+        })
         nights.put(night)
         while (nights.length() > 14) nights.remove(0)
+        endedSession = null
         current = night
         save()
     }
@@ -51,9 +64,18 @@ class NightLog(context: Context, private val now: () -> Long = System::currentTi
 
     @Synchronized
     override fun sessionEnded(sessionId: Int, reason: EndReason) {
+        endedSession = current?.let { sessionId to it }
         current?.put("end", now())?.put("reason", reason.name)
         save()
         current = null
+    }
+
+    @Synchronized
+    override fun sleepRouteFailed(sessionId: Int) {
+        val (id, night) = endedSession ?: return
+        if (id != sessionId || night.has("sleepRoute")) return
+        night.put("sleepRoute", "Failed")
+        save()
     }
 
     private fun event(kind: String, value: String) = JSONObject().put("at", now()).put("kind", kind)
@@ -106,6 +128,8 @@ class NightLog(context: Context, private val now: () -> Long = System::currentTi
             val n = nights.getJSONObject(i)
             writer.println("night start=${n.getLong("start")} end=${n.opt("end") ?: "open"} reason=${n.optString("reason", "Running")} timerMinutes=${n.getInt("timerMinutes")}")
             writer.println("  volume=${n.optJSONObject("volume")}")
+            if (n.has("sleepRoute")) writer.println("  sleepRoute=${n.getString("sleepRoute")}")
+            writer.println("  powerTimeouts=${n.optJSONObject("powerTimeouts")}")
             val events = n.getJSONArray("events")
             for (j in 0 until events.length()) {
                 val e = events.getJSONObject(j)

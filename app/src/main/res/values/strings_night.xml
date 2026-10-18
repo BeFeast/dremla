@@ -1,0 +1,4 @@
+<resources>
+    <string name="night_sleep_route">TV off</string>
+    <string name="night_sleep_description">Puts the box to sleep only when a night timer ends with TV off enabled. Does not read screen content.</string>
+</resources>

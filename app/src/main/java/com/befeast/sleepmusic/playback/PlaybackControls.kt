@@ -36,6 +36,11 @@ interface PlaybackControls {
     /** Blocks the current track for good and skips it. */
     fun neverAgain()
 
+    fun setTvOff(enabled: Boolean) {}
+
+    /** Re-read route availability; never invokes a sleep action. */
+    fun refreshSleepRoute() {}
+
     fun setTimerMinutes(minutes: Int)
 
     /** Persists the start volume level (1..25 on the reference scale); applies from the next session. */

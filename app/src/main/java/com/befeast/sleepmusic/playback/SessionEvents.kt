@@ -9,6 +9,7 @@ interface SessionEvents {
     fun trackStarted(sessionId: Int, trackId: String) {}
     fun sessionEnded(sessionId: Int, reason: EndReason) {}
     fun playbackError(sessionId: Int, code: String) {}
+    fun sleepRouteFailed(sessionId: Int) {}
 
     companion object {
         val NONE: SessionEvents = object : SessionEvents {}
@@ -34,6 +35,10 @@ class LogcatSessionEvents : SessionEvents {
 
     override fun playbackError(sessionId: Int, code: String) {
         Log.w(TAG, "session $sessionId player error: $code")
+    }
+
+    override fun sleepRouteFailed(sessionId: Int) {
+        Log.w(TAG, "session $sessionId sleep route failed")
     }
 
     private companion object {

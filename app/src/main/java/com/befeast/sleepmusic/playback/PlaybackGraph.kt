@@ -73,6 +73,7 @@ class AppPlaybackGraph internal constructor(
             source = collectionSource ?: checkNotNull(downloads),
             host = ServicePlaybackHost(app),
             events = nightLog,
+            sleepRoute = AndroidSleepRoute(app),
         )
     }
 

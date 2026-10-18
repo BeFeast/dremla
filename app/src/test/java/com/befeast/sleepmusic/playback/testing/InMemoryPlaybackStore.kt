@@ -33,6 +33,8 @@ class InMemoryPlaybackStore : PlaybackStore {
         bagHistory += state
     }
 
+    override var tvOff = true
+
     override var timerMinutes: Int
         get() = timer
         set(value) {

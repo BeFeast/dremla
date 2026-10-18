@@ -33,9 +33,10 @@ class PlaybackEngine(
     private val host: PlaybackHost,
     private val events: SessionEvents = SessionEvents.NONE,
     random: Random = Random.Default,
+    private val sleepRoute: SleepRoute = SleepRoute.NONE,
 ) : PlaybackControls {
 
-    private class Session(val id: Int, val timer: SleepTimer) {
+    private class Session(val id: Int, val timer: SleepTimer, val startedAtMs: Long) {
         /** The listener's intent: the phase shows Paused. */
         var paused = false
 
@@ -59,7 +60,11 @@ class PlaybackEngine(
 
     private val queue = PlayQueue(ShuffleBag(random), store)
     private val envelope = VolumeEnvelope()
-    private val mutableState = MutableStateFlow(SessionState(timerMinutes = store.timerMinutes))
+    private val mutableState = MutableStateFlow(SessionState(
+        timerMinutes = store.timerMinutes,
+        tvOff = store.tvOff,
+        sleepRouteStatus = sleepRoute.status(),
+    ))
     override val state: StateFlow<SessionState> = mutableState.asStateFlow()
 
     private var session: Session? = null
@@ -105,7 +110,7 @@ class PlaybackEngine(
     override fun onUiEntry(verdict: LaunchVerdict) {
         events.uiEntry(verdict)
         if (!verdict.isLauncherStart) return
-        if (session != null) {
+        if (commandSession(allowDismiss = false) != null) {
             play(CommandSource.Remote)
             return
         }
@@ -133,7 +138,7 @@ class PlaybackEngine(
         val now = clock.nowMs()
         val minutes = SleepTimer.sanitize(store.timerMinutes)
         val first = queue.begin(eligible) ?: return
-        val s = Session(++sessionCounter, SleepTimer.start(now, minutes))
+        val s = Session(++sessionCounter, SleepTimer.start(now, minutes), now)
         session = s
         envelope.reset(now)
         describe(s, collection, first.id)
@@ -154,18 +159,28 @@ class PlaybackEngine(
     // ---- commands ----
 
     override fun togglePause(source: CommandSource) {
-        val s = session ?: return
+        val s = commandSession() ?: return
         if (s.paused) resume(s) else pause(s)
     }
 
     override fun play(source: CommandSource) {
-        val s = session ?: return
+        val s = commandSession() ?: return
         if (s.paused) resume(s)
     }
 
     override fun pause(source: CommandSource) {
-        val s = session ?: return
+        val s = commandSession() ?: return
         if (!s.paused) pause(s)
+    }
+
+    /** A command arriving before the first post-sleep tick cannot revive expired audio. */
+    private fun commandSession(allowDismiss: Boolean = true): Session? {
+        val s = session ?: return null
+        if (s.timer.remainingMs(clock.nowMs()) <= 0) {
+            finish(EndReason.TimerEnded, allowSleep = false, allowDismiss = allowDismiss)
+            return null
+        }
+        return s
     }
 
     private fun pause(s: Session) {
@@ -198,7 +213,7 @@ class PlaybackEngine(
     }
 
     override fun skip(source: CommandSource) {
-        val s = session ?: return
+        val s = commandSession() ?: return
         if (s.skipPending) return
         s.skipPending = true
         // A skip resumes a paused session; a pause pressed during the skip ramp applies to the new track.
@@ -241,10 +256,19 @@ class PlaybackEngine(
         skip(CommandSource.Menu)
     }
 
+    override fun setTvOff(enabled: Boolean) {
+        store.tvOff = enabled
+        mutableState.update { it.copy(tvOff = enabled) }
+    }
+
+    override fun refreshSleepRoute() {
+        mutableState.update { it.copy(sleepRouteStatus = sleepRoute.status()) }
+    }
+
     override fun setTimerMinutes(minutes: Int) {
         val value = SleepTimer.sanitize(minutes)
         store.timerMinutes = value
-        val s = session
+        val s = commandSession()
         if (s == null) {
             mutableState.update { if (it.isActive) it else it.copy(timerMinutes = value) }
             return
@@ -371,7 +395,7 @@ class PlaybackEngine(
         port.advance()
     }
 
-    private fun finish(reason: EndReason) {
+    private fun finish(reason: EndReason, allowSleep: Boolean = true, allowDismiss: Boolean = true) {
         val s = session ?: return
         session = null
         pendingStart = false
@@ -382,6 +406,9 @@ class PlaybackEngine(
         queue.clear()
         mutableState.value = SessionState(
             phase = Phase.Finished,
+            blackScreen = true,
+            tvOff = store.tvOff,
+            sleepRouteStatus = sleepRoute.status(),
             sessionId = s.id,
             timerMinutes = store.timerMinutes,
             endReason = reason,
@@ -392,6 +419,21 @@ class PlaybackEngine(
         )
         events.sessionEnded(s.id, reason)
         host.sessionEnded()
+        // Only this live transition may sleep. State collection, resume and recreation cannot replay it.
+        val ended = mutableState.value
+        if (ended.tvOff && reason == EndReason.TimerEnded) {
+            // Paused expiry may be the first tick after wake, even inside the grace period.
+            val shouldLock = allowSleep && !s.paused && ended.timerEndLateMs <= MAX_SLEEP_LATENESS_MS
+            if (!shouldLock) {
+                mutableState.update { it.copy(closeActivity = allowDismiss && it.sleepRouteStatus != SleepRouteStatus.NotEnabled) }
+                return
+            }
+            val slept = sleepRoute.sleep()
+            if (!slept) events.sleepRouteFailed(s.id)
+            mutableState.update {
+                it.copy(closeActivity = slept, sleepRouteStatus = if (slept) it.sleepRouteStatus else SleepRouteStatus.NotEnabled)
+            }
+        }
     }
 
     // ---- helpers ----
@@ -407,6 +449,9 @@ class PlaybackEngine(
         }
         mutableState.value = SessionState(
             phase = phase,
+            tvOff = store.tvOff,
+            sleepRouteStatus = mutableState.value.sleepRouteStatus,
+            blackScreen = now - s.startedAtMs >= BLACK_AFTER_MS,
             sessionId = s.id,
             track = s.nowPlaying,
             trackRemainingSec = if (duration > 0) ceilSeconds(duration - port.positionMs) else 0,
@@ -449,6 +494,8 @@ class PlaybackEngine(
     private fun ceilSeconds(ms: Long): Long = (ms.coerceAtLeast(0L) + 999L) / 1000L
 
     companion object {
+        const val BLACK_AFTER_MS = 10_000L
+        const val MAX_SLEEP_LATENESS_MS = 30_000L
         const val TICK_MS = 50L
         const val MAX_CONSECUTIVE_ERRORS = 3
         const val VOLUME_EPSILON = 1e-5f

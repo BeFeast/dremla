@@ -17,7 +17,37 @@ class NightLogTest {
     private val volume = StartVolumeResult(25, 5, false, 15, 15, false, false, null)
     private fun dump(log: NightLog) = StringWriter().also { log.dump(PrintWriter(it)) }.toString()
 
+    @Test fun routeFailureIsPersistedOnceAfterEndAndCannotAttachToNextNight() {
+        val log = NightLog(app)
+        log.sessionStarted(1, 120, volume)
+        log.sessionEnded(1, EndReason.TimerEnded)
+        repeat(2) { log.sleepRouteFailed(1) }
+        log.sessionStarted(2, 120, volume)
+        log.sleepRouteFailed(1)
+        assertEquals(1, dump(NightLog(app)).lineSequence().count { it == "  sleepRoute=Failed" })
+    }
+
+    @Test fun timeoutSnapshotUsesPublicSettingsAtEveryStartWithoutChangingThem() {
+        val resolver = app.contentResolver
+        android.provider.Settings.Secure.putString(resolver, "attentive_timeout", "7200000")
+        android.provider.Settings.Secure.putString(resolver, "sleep_timeout", "-1")
+        android.provider.Settings.System.putString(resolver, "screen_off_timeout", "60000")
+        val log = NightLog(app)
+        log.sessionStarted(1, 120, volume)
+        val text = dump(log)
+        assertTrue(text.contains("\"attentive_timeout\":7200000"))
+        assertTrue(text.contains("\"sleep_timeout\":-1"))
+        assertTrue(text.contains("\"screen_off_timeout\":60000"))
+        assertEquals("7200000", android.provider.Settings.Secure.getString(resolver, "attentive_timeout"))
+        android.provider.Settings.Secure.putString(resolver, "attentive_timeout", null)
+        log.sessionStarted(2, 120, volume)
+        assertTrue(dump(log).contains("\"attentive_timeout\":null"))
+    }
+
     @Test fun stableFormatPersistsStartTrackErrorEndAndNeverRawErrorText() {
+        android.provider.Settings.Secure.putString(app.contentResolver, "attentive_timeout", null)
+        android.provider.Settings.Secure.putString(app.contentResolver, "sleep_timeout", null)
+        android.provider.Settings.System.putString(app.contentResolver, "screen_off_timeout", null)
         var now = 1000L
         val log = NightLog(app) { now }
         log.sessionStarted(1, 120, volume)
@@ -34,6 +64,7 @@ class NightLogTest {
             storage=ok nights=1
             night start=1000 end=3000 reason=TimerEnded timerMinutes=120
               volume={"before":5,"after":15,"mutedAfter":false,"fixed":false}
+              powerTimeouts={"attentive_timeout":null,"sleep_timeout":null,"screen_off_timeout":null}
               2000 track=amb-001
               2000 error=ERROR_CODE_IO_UNSPECIFIED
               2000 error=PlaybackFailed

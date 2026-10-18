@@ -1,5 +1,9 @@
 # Playback (issue #3)
 
+Issue #5 integration: [night.md](night.md) defines black-screen timing, TV-off preferences,
+sleep routes, late-timer guards and activity removal. It supersedes the corresponding
+pending seams and placeholder behaviour below.
+
 Issue #4 integration: [collection.md](collection.md) supersedes the local-only source, logcat-only
 events and pending-start/service-dump gaps described below. INTERNET is now deliberate. Service
 creation waits for a start or bind; a bounded diagnostic start never creates playback.

@@ -36,6 +36,16 @@ data class NowPlaying(
  */
 data class SessionState(
     val phase: Phase = Phase.Idle,
+    /** Persisted menu preference, effective at timer completion. */
+    val tvOff: Boolean = true,
+    val sleepRouteStatus: SleepRouteStatus = SleepRouteStatus.NotEnabled,
+    /** Suppress all scene content after ten seconds; never reset by pause or timer edits. */
+    val blackScreen: Boolean = false,
+    /**
+     * Remove the activity task, without replaying any sleep request: set when a sleep request
+     * succeeded, or when a late TV-off night is dismissed on wake with its lock suppressed.
+     */
+    val closeActivity: Boolean = false,
     /** +1 at every session start; 0 before the first one in this process. */
     val sessionId: Int = 0,
     val track: NowPlaying? = null,

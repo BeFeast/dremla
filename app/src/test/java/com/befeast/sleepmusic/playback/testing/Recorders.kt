@@ -33,6 +33,8 @@ class RecordingHost(private val log: MutableList<String>) : PlaybackHost {
 }
 
 class RecordingEvents : SessionEvents {
+    val sleepFailures = mutableListOf<Int>()
+    override fun sleepRouteFailed(sessionId: Int) { sleepFailures += sessionId }
     val verdicts = mutableListOf<LaunchVerdict>()
     val startVolumes = mutableListOf<StartVolumeResult>()
     val tracks = mutableListOf<String>()
