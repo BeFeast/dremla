@@ -110,7 +110,8 @@ Cross-origin object storage and HTTP downgrades are deliberately unsupported and
 Commit only `delivery/release-lock.json` in a follow-up PR with the release/run links and
 verification result. Do not commit the APK, downloaded checksum file or logs. The release
 workflow does not create this PR automatically. Review the lock before any delivery.
-AC-1 compares the installed identity with this lock; AC-15 still requires operator-approved
+AC-1 compares the installed identity with this lock through the read-only
+[delivery device stage](delivery.md); AC-15 still requires operator-approved
 upgrade verification on the device. Later releases must use a higher versionCode and the
 same signing identity; this repository work performs no installation or device test.
 

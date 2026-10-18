@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Outcome verification for Dremla. No arguments. Environment:
 #   DREMLA_OUTCOME_SCOPE       repo: host checks only (CI). full (default): host checks plus the
-#                              device-identity stage.
+#                              read-only device-identity stage (fails without delivery config).
 #   DREMLA_GRADLE_MAX_WORKERS  --max-workers for every Gradle call (default 2).
 #
 # Host checks: clean build of debug and unsigned release APKs, unit tests with golden scenes,
 # lint, APK inspection, the hygiene check, the forbidden-API check and the brand-kit port check,
 # each check with its self-test, and the self-test of the release signing scripts (throwaway
-# keystore, stub curl, no network; needs JAVA_HOME or keytool on PATH, jq and shred). After the
+# keystore, stub curl, no network; needs JAVA_HOME or keytool on PATH, jq and shred). The
+# offline fake-device delivery self-tests run in both scopes. After the
 # Gradle stage it prints the unit-test counts per class. Every stage runs even when an earlier one
 # failed; the summary lists all of them and the exit status is non-zero if any check failed. The
 # script does not lower its own priority; callers wrap it (CI uses nice -n 19).
@@ -108,17 +109,6 @@ unit_test_summary() {
   ' "${results[@]}" || echo "unit tests: could not read every result file"
 }
 
-# Device identity (installed package, version, signing certificate) is wired up by the install
-# issue. Until then the stage reports itself as not configured and does not fail.
-device_identity_stage() {
-  echo
-  echo "==== stage: device-identity"
-  echo "device identity: not configured (enabled by the install issue)"
-  stage_names+=("device-identity")
-  stage_results+=("NOT CONFIGURED")
-  stage_seconds+=("0")
-}
-
 echo "verify-outcome: scope=$scope gradle-max-workers=$workers"
 
 # One Gradle call, so the unit tests run once: verifyRoborazziDebug depends on testDebugUnitTest
@@ -142,11 +132,12 @@ run_stage "kit-port" scripts/check-kit-port.sh
 run_stage "privacy-self-test" scripts/test-privacy.sh
 run_stage "privacy" scripts/check-privacy.sh
 run_stage "signing-self-test" scripts/test-signing.sh
+run_stage "device-self-test" scripts/test-device.sh
 run_stage "release-lock-self-test" scripts/test-release-lock.sh
 run_stage "release-lock" scripts/check-release-lock.sh
 
 if [[ "$scope" == "full" ]]; then
-  device_identity_stage
+  run_stage "device-identity" python3 -I scripts/device-tools.py verify
 fi
 
 echo

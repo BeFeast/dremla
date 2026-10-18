@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -188,19 +189,28 @@ def publish():
     print("release published: /" + api.repo + "/releases/tag/" + tag)
 
 
+def build_tool(name):
+    sdk = os.environ.get("ANDROID_HOME", "")
+    tool = Path(sdk) / "build-tools/34.0.0" / name
+    require(sdk and tool.is_file() and os.access(tool, os.X_OK),
+            "build-tools 34.0.0 requires executable " + name + "; configure ANDROID_HOME")
+    return tool
+
+
 def inspect(apk):
+    signer = build_tool("apksigner")
+    aapt = build_tool("aapt2")
     env = dict(os.environ)
     env.pop("DREMLA_RELEASE_TOKEN", None)
     env["DREMLA_APK"] = str(apk)
     env["DREMLA_APK_REQUIRE_SIGNED"] = "1"
     subprocess.run([str(ROOT / "scripts/inspect-apk.sh")], env=env, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    sdk = Path(env["ANDROID_HOME"]) / "build-tools/34.0.0"
-    certs = subprocess.check_output([str(sdk / "apksigner"), "verify", "--print-certs", "-Werr", str(apk)],
+    certs = subprocess.check_output([str(signer), "verify", "--print-certs", "-Werr", str(apk)],
                                     env=env, text=True, stderr=subprocess.DEVNULL)
     digests = re.findall(r"^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})$", certs, re.M)
     require(len(digests) == 1, "APK must have exactly one signing certificate")
-    badging = subprocess.check_output([str(sdk / "aapt2"), "dump", "badging", str(apk)],
+    badging = subprocess.check_output([str(aapt), "dump", "badging", str(apk)],
                                       env=env, text=True, stderr=subprocess.DEVNULL)
     match = re.search(r"^package: name='com\.befeast\.sleepmusic' versionCode='([0-9]+)' versionName='([^']+)'", badging, re.M)
     require(match is not None and not re.search(r"^native-code:", badging, re.M), "invalid APK badging")
@@ -208,7 +218,7 @@ def inspect(apk):
     return int(match[1]), match[2], digests[0].lower()
 
 
-def published_identity(api, tag):
+def published_identity(api, tag, output_directory=None):
     """Read-only verification of published bytes; injectable API keeps tests offline."""
     require(matches("v" + SEMVER, tag), "release tag must be v<SemVer>")
     release = api.json("/releases/tags/" + urllib.parse.quote(tag, safe=""))
@@ -234,6 +244,8 @@ def published_identity(api, tag):
                     versionCode=code, versionName=name, certificateSha256=cert,
                     releaseUrlPath="/" + api.repo + "/releases/tag/" + tag)
         validate_lock(data)
+        if output_directory is not None:
+            shutil.copyfile(work / asset, Path(output_directory) / asset)
         return data
 
 
