@@ -43,5 +43,12 @@ fun SemanticsNodeInteraction.captureGolden(fileName: String) {
     assertNotNull("captured bitmap", bitmap)
     assertEquals("captured width in px", Goldens.WIDTH_PX, bitmap!!.width)
     assertEquals("captured height in px", Goldens.HEIGHT_PX, bitmap.height)
+    val pixels = IntArray(bitmap.width * bitmap.height)
+    bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+    org.junit.Assert.assertTrue("Every golden pixel has blue <= 91 and no white",
+        pixels.all { (it and 255) <= 91 && it != -1 })
+    if (fileName.contains("black") || fileName.contains("finished")) {
+        org.junit.Assert.assertTrue("Pure black scene", pixels.all { it == 0xff000000.toInt() })
+    }
     captureRoboImage(fileName, roborazziOptions = Goldens.options)
 }

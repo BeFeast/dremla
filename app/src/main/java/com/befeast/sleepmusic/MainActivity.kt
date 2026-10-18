@@ -22,15 +22,19 @@ import com.befeast.sleepmusic.playback.PlaybackProvider
 import com.befeast.sleepmusic.playback.RemoteCommand
 import com.befeast.sleepmusic.playback.RemoteKeyMap
 import com.befeast.sleepmusic.playback.launchSignal
-import com.befeast.sleepmusic.ui.nightPlaceholder
-import com.befeast.sleepmusic.ui.PlaceholderScene
+import com.befeast.sleepmusic.ui.NightScene
+import androidx.compose.runtime.mutableStateOf
+import androidx.activity.compose.BackHandler
+import com.befeast.sleepmusic.playback.SharedPrefsPlaybackStore
 
 /**
  * Launcher entry point (`singleTask`, so a tile press on an existing task arrives in
  * [onNewIntent]). Only [onCreate] and [onNewIntent] consult the launch classifier; resume and wake
- * never do, so they never start music. The scaffold still shows only the black placeholder scene.
+ * never do, so they never start music. The night scene observes the same session state.
  */
 class MainActivity : ComponentActivity() {
+    private val menuOpen = mutableStateOf(false)
+    private val startVolume = mutableStateOf(15)
     private val controls: PlaybackControls
         get() = (application as PlaybackProvider).playback.controls
 
@@ -45,21 +49,23 @@ class MainActivity : ComponentActivity() {
                 // Normal idle/screensaver only; inattentive sleep is an install prerequisite (night.md).
                 if (state.isActive) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                if (state.blackScreen || state.phase == com.befeast.sleepmusic.playback.Phase.Finished) menuOpen.value = false
                 if (state.closeActivity) finishAndRemoveTask()
             }
         }
+        startVolume.value = SharedPrefsPlaybackStore(this).startVolumeLevel
         setContent {
             val session = controls.state.collectAsState().value
             val downloads = (application as PlaybackProvider).playback.downloads
             val status = downloads?.status?.collectAsState()?.value
-            val message = when (status?.phase) {
-                CollectionPhase.Loading -> "Loading collection…"
-                CollectionPhase.Downloading -> "Downloading collection ${status.progress?.fileIndex ?: 0}/${status.progress?.fileCount ?: 0}"
-                CollectionPhase.FirstRunError -> "Collection unavailable. Check your connection and press OK to retry."
-                CollectionPhase.RefreshError -> "Refresh failed. Your saved collection is still available."
-                else -> null
-            }
-            PlaceholderScene(nightPlaceholder(session, message))
+            BackHandler(enabled = menuOpen.value) { menuOpen.value = false }
+            NightScene(session, status, menuOpen.value, startVolume.value,
+                onTimer = controls::setTimerMinutes,
+                onVolume = { startVolume.value = it; controls.setStartVolumeLevel(it) },
+                onTvOff = { controls.setTvOff(!session.tvOff) },
+                onRefresh = { downloads?.refresh(); menuOpen.value = false },
+                onLike = controls::toggleLike, onNever = controls::neverAgain,
+                onOpenMenu = { menuOpen.value = true; controls.refreshSleepRoute() })
         }
     }
 
@@ -79,6 +85,8 @@ class MainActivity : ComponentActivity() {
      * Volume and mute keys return `super`, so the system keeps changing STREAM_MUSIC.
      */
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (menuOpen.value && keyCode in listOf(KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN)) return true
         val command = RemoteKeyMap.onKeyDown(keyCode, event.repeatCount) ?: return super.onKeyDown(keyCode, event)
         if (command == RemoteCommand.TrackPress) event.startTracking() else run(command)
         return true
@@ -92,8 +100,14 @@ class MainActivity : ComponentActivity() {
     }
 
     /** A long press of OK cancels its release; #6 opens the menu here. */
-    override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean =
-        RemoteKeyMap.consumesLongPress(keyCode) || super.onKeyLongPress(keyCode, event)
+    override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
+        if (!RemoteKeyMap.consumesLongPress(keyCode)) return super.onKeyLongPress(keyCode, event)
+        if (!controls.state.value.blackScreen && controls.state.value.phase != com.befeast.sleepmusic.playback.Phase.Finished) {
+            menuOpen.value = true
+            controls.refreshSleepRoute()
+        }
+        return true
+    }
 
     override fun onStop() {
         // Leaving during the first download cancels the launch intent, never an active night.
