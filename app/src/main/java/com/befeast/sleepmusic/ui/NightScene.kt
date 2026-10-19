@@ -31,9 +31,7 @@ fun NightScene(
     session: SessionState,
     status: CollectionStatus? = null,
     menuOpen: Boolean = false,
-    startVolume: Int = 15,
     onTimer: (Int) -> Unit = {},
-    onVolume: (Int) -> Unit = {},
     onTvOff: () -> Unit = {},
     onRefresh: () -> Unit = {},
     onLike: () -> Unit = {},
@@ -44,7 +42,7 @@ fun NightScene(
     Box(Modifier.fillMaxSize().background(BrandColors.Ground)) {
         if (session.phase == Phase.Finished || session.closeActivity || session.blackScreen) return@Box
         if (menuOpen) {
-            NightMenu(session, status, startVolume, type, onTimer, onVolume, onTvOff, onRefresh, onLike, onNever)
+            NightMenu(session, status, type, onTimer, onTvOff, onRefresh, onLike, onNever)
             Hints(listOf("↑ ↓ ← →" to "move", "OK" to "choose", "BACK" to "close"), type)
             return@Box
         }
@@ -161,8 +159,8 @@ fun NightScene(
         }.semantics { onClick { action(); true } }.focusable(), contentAlignment = Alignment.Center) { content(focused) }
 }
 
-@Composable private fun BoxScope.NightMenu(s: SessionState, status: CollectionStatus?, volume: Int, type: BrandType,
-    timer: (Int) -> Unit, setVolume: (Int) -> Unit, tv: () -> Unit, refresh: () -> Unit, like: () -> Unit, never: () -> Unit) {
+@Composable private fun BoxScope.NightMenu(s: SessionState, status: CollectionStatus?, type: BrandType,
+    timer: (Int) -> Unit, tv: () -> Unit, refresh: () -> Unit, like: () -> Unit, never: () -> Unit) {
     Column(Modifier.align(Alignment.TopCenter).padding(top = 24.dp).width(BrandSpacing.PanelWidth)
         .background(BrandColors.Panel).border(0.5.dp, BrandColors.Line).padding(horizontal = 30.dp, vertical = 20.dp)) {
         Eyebrow("SLEEP TIMER", type)
@@ -190,7 +188,6 @@ fun NightScene(
             SleepRouteStatus.Accessibility -> "accessibility"
         }
         val rows = listOf(
-            Triple("volume", "Start volume", "$volume / 25 · next night"),
             Triple("tv", "TV off", if (s.tvOff) "on · ${route()}" else "off · ${route()}"),
             Triple("refresh", "Refresh collection", "${s.playableCount} tracks"),
             Triple("like", if (s.track?.liked == true) "Unlike" else "Like", "current track"),
@@ -199,7 +196,6 @@ fun NightScene(
         rows.forEach { (tag, title, meta) ->
             NightControl(tag, Modifier.fillMaxWidth().height(BrandSpacing.RowHeight), action = {
                 when (tag) {
-                    "volume" -> setVolume(if (volume == 25) 1 else volume + 1)
                     "tv" -> tv()
                     "refresh" -> refresh()
                     "like" -> like()

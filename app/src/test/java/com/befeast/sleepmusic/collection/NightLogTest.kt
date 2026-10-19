@@ -14,7 +14,7 @@ import java.io.StringWriter
 @Config(sdk = [34])
 class NightLogTest {
     private val app = RuntimeEnvironment.getApplication()
-    private val volume = StartVolumeResult(25, 5, false, 15, 15, false, false, null)
+    private val volume = StartVolumeResult(25, 5, false, 5, false, false)
     private fun dump(log: NightLog) = StringWriter().also { log.dump(PrintWriter(it)) }.toString()
 
     @Test fun routeFailureIsPersistedOnceAfterEndAndCannotAttachToNextNight() {
@@ -63,7 +63,7 @@ class NightLogTest {
             Dremla night log v1 (last 14 nights; timestamps epoch-ms)
             storage=ok nights=1
             night start=1000 end=3000 reason=TimerEnded timerMinutes=120
-              volume={"before":5,"after":15,"mutedAfter":false,"fixed":false}
+              volume={"before":5,"after":5,"mutedAfter":false,"fixed":false}
               powerTimeouts={"attentive_timeout":null,"sleep_timeout":null,"screen_off_timeout":null}
               2000 track=amb-001
               2000 error=ERROR_CODE_IO_UNSPECIFIED

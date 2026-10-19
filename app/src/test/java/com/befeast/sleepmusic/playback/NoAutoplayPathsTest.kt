@@ -74,7 +74,6 @@ class NoAutoplayPathsTest {
             setLiked("amb-003", true)
             block("amb-004")
             timerMinutes = 45
-            startVolumeLevel = 18
         }
         val h = EngineHarness(store = store)
         h.advance(3 * 3_600_000L)

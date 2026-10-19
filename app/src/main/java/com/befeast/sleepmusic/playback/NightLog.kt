@@ -33,7 +33,6 @@ class NightLog(context: Context, private val now: () -> Long = System::currentTi
         val night = JSONObject().put("start", now()).put("timerMinutes", timerMinutes).put("events", JSONArray())
         night.put("volume", JSONObject().put("before", startVolume.before).put("after", startVolume.after)
             .put("mutedAfter", startVolume.mutedAfter).put("fixed", startVolume.fixed))
-        if (startVolume.error != null) night.getJSONArray("events").put(event("error", "StartVolumeFailed"))
         night.put("powerTimeouts", JSONObject().apply {
             for (key in listOf("attentive_timeout", "sleep_timeout", "screen_off_timeout")) {
                 val value = try {

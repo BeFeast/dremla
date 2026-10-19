@@ -10,7 +10,7 @@ The night screen, the sleep-timer menu and the first launch. These are the golde
 
 ![Night screen: category, track title, artist and the time left until the music fades](app/src/test/screenshots/night-player.png)
 
-![Sleep-timer menu: timer tiles, start volume, TV off, refresh collection, like and never again](app/src/test/screenshots/night-menu.png)
+![Sleep-timer menu: timer tiles, TV off, refresh collection, like and never again](app/src/test/screenshots/night-menu.png)
 
 ![First launch: the collection downloads once, after that the music plays offline](app/src/test/screenshots/night-download.png)
 
@@ -51,7 +51,7 @@ A newer version installs over the previous one the same way and keeps the settin
 
 ## How it works
 
-- **One press.** Starting Dremla from the launcher plays a random track from the selection with a 30-second fade-in, at the start volume set in the menu (15 of 25 by default). Only a launcher start plays music; resume, wake, boot or a restarted process never do.
+- **One press.** Starting Dremla from the launcher plays a random track from the selection with a 30-second fade-in, at the volume the TV box is already set to: Dremla never raises the volume. Only a launcher start plays music; resume, wake, boot or a restarted process never do.
 - **Offline.** The first launch downloads the selection once. Every file is checked against its SHA-256; an interrupted download continues where it stopped. After that Dremla needs no network. "Refresh collection" in the menu fetches new tracks when you ask for them and keeps the old ones playing if the download fails.
 - **Black screen.** About ten seconds after start the picture becomes pure black and stays black. The music continues; no clock, no artwork, no glow.
 - **Timer and fade.** 30, 45, 60, 90, 120 or 180 minutes, remembered for the next night. The last ten minutes fade smoothly to silence, then playback stops. With "TV off" on (the default) the box goes to sleep and, if the TV follows HDMI-CEC, the TV goes to standby with it.
@@ -65,7 +65,7 @@ Remote keys:
 |---|---|
 | OK | Pause / resume |
 | Right | Next track |
-| Hold OK | Open the menu: timer, start volume, TV off, refresh collection, like, never again |
+| Hold OK | Open the menu: timer, TV off, refresh collection, like, never again |
 | Back | Close the menu |
 | Volume and mute | Stay with the system, as on any other app |
 

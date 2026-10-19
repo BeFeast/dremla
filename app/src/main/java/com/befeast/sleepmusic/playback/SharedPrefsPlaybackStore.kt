@@ -3,11 +3,10 @@ package com.befeast.sleepmusic.playback
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
-import com.befeast.sleepmusic.StartVolume
 
 /**
  * [PlaybackStore] in one app-private SharedPreferences file, `playback`. Decisions of the listener
- * (likes, blocks, timer, start volume, TV off) are written with commit, so a process killed right after a
+ * (likes, blocks, timer, TV off) are written with commit, so a process killed right after a
  * block still has it; shuffle progress uses apply, where a lost write allows at most one repeat.
  * Backup and device transfer exclude the whole app (res/xml), so nothing here leaves the device.
  */
@@ -65,15 +64,6 @@ class SharedPrefsPlaybackStore(context: Context) : PlaybackStore {
             }
         }
 
-    override var startVolumeLevel: Int
-        get() = StartVolumeLevel.sanitize(prefs.getInt(KEY_START_VOLUME, StartVolume.DEFAULT_LEVEL))
-        set(value) {
-            prefs.edit(commit = true) {
-                putSchema()
-                putInt(KEY_START_VOLUME, StartVolumeLevel.sanitize(value))
-            }
-        }
-
     private fun SharedPreferences.Editor.putSchema() {
         putInt(KEY_SCHEMA, SCHEMA)
     }
@@ -88,6 +78,6 @@ class SharedPrefsPlaybackStore(context: Context) : PlaybackStore {
         const val KEY_BAG_LAST = "bag_last"
         const val KEY_TV_OFF = "tv_off"
         const val KEY_TIMER = "timer_min"
-        const val KEY_START_VOLUME = "start_volume_level"
+        // v0.1.0 also wrote "start_volume_level"; it is no longer read or written (#34) and stays as left.
     }
 }

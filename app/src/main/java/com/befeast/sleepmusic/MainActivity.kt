@@ -25,7 +25,6 @@ import com.befeast.sleepmusic.playback.launchSignal
 import com.befeast.sleepmusic.ui.NightScene
 import androidx.compose.runtime.mutableStateOf
 import androidx.activity.compose.BackHandler
-import com.befeast.sleepmusic.playback.SharedPrefsPlaybackStore
 
 /**
  * Launcher entry point (`singleTask`, so a tile press on an existing task arrives in
@@ -34,7 +33,6 @@ import com.befeast.sleepmusic.playback.SharedPrefsPlaybackStore
  */
 class MainActivity : ComponentActivity() {
     private val menuOpen = mutableStateOf(false)
-    private val startVolume = mutableStateOf(15)
     private val controls: PlaybackControls
         get() = (application as PlaybackProvider).playback.controls
 
@@ -53,15 +51,13 @@ class MainActivity : ComponentActivity() {
                 if (state.closeActivity) finishAndRemoveTask()
             }
         }
-        startVolume.value = SharedPrefsPlaybackStore(this).startVolumeLevel
         setContent {
             val session = controls.state.collectAsState().value
             val downloads = (application as PlaybackProvider).playback.downloads
             val status = downloads?.status?.collectAsState()?.value
             BackHandler(enabled = menuOpen.value) { menuOpen.value = false }
-            NightScene(session, status, menuOpen.value, startVolume.value,
+            NightScene(session, status, menuOpen.value,
                 onTimer = controls::setTimerMinutes,
-                onVolume = { startVolume.value = it; controls.setStartVolumeLevel(it) },
                 onTvOff = { controls.setTvOff(!session.tvOff) },
                 onRefresh = { downloads?.refresh(); menuOpen.value = false },
                 onLike = controls::toggleLike, onNever = controls::neverAgain,

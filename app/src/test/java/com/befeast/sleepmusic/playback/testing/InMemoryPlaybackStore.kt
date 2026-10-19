@@ -1,17 +1,14 @@
 package com.befeast.sleepmusic.playback.testing
 
-import com.befeast.sleepmusic.StartVolume
 import com.befeast.sleepmusic.playback.BagState
 import com.befeast.sleepmusic.playback.PlaybackStore
 import com.befeast.sleepmusic.playback.SleepTimer
-import com.befeast.sleepmusic.playback.StartVolumeLevel
 
 class InMemoryPlaybackStore : PlaybackStore {
     private val likedIds = linkedSetOf<String>()
     private val blockedIds = linkedSetOf<String>()
     private var bagState = BagState()
     private var timer = SleepTimer.DEFAULT_MINUTES
-    private var level = StartVolume.DEFAULT_LEVEL
     val bagHistory = mutableListOf<BagState>()
 
     override fun liked(): Set<String> = likedIds.toSet()
@@ -39,11 +36,5 @@ class InMemoryPlaybackStore : PlaybackStore {
         get() = timer
         set(value) {
             timer = SleepTimer.sanitize(value)
-        }
-
-    override var startVolumeLevel: Int
-        get() = level
-        set(value) {
-            level = StartVolumeLevel.sanitize(value)
         }
 }

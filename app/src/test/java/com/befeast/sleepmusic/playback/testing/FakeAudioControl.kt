@@ -2,30 +2,26 @@ package com.befeast.sleepmusic.playback.testing
 
 import com.befeast.sleepmusic.playback.AudioControl
 
-/** STREAM_MUSIC stand-in with the target box's max index 25 by default. */
+/**
+ * STREAM_MUSIC stand-in with the target box's max index 25 by default. [AudioControl] has no write
+ * methods (#34), so only the system (the remote) changes it, through [systemChange].
+ */
 class FakeAudioControl(
-    private val log: MutableList<String>,
+    @Suppress("UNUSED_PARAMETER") log: MutableList<String>,
     override val maxIndex: Int = 25,
     var current: Int = 4,
     var muted: Boolean = false,
     override val isFixed: Boolean = false,
 ) : AudioControl {
-    var denyChanges = false
+    var reads = 0
+        private set
 
-    override fun index(): Int = if (muted) 0 else current
+    override fun index(): Int {
+        reads++
+        return if (muted) 0 else current
+    }
+
     override fun isMuted(): Boolean = muted
-
-    override fun unmute() {
-        log += "audio.unmute"
-        if (denyChanges) throw SecurityException("not allowed in do not disturb")
-        muted = false
-    }
-
-    override fun setIndex(index: Int) {
-        log += "audio.setIndex($index)"
-        if (denyChanges) throw SecurityException("not allowed in do not disturb")
-        current = index
-    }
 
     /** The listener presses volume or mute on the remote: the system changes the stream, not the app. */
     fun systemChange(index: Int, muted: Boolean = false) {

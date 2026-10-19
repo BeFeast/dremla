@@ -4,65 +4,67 @@ import com.befeast.sleepmusic.playback.testing.EngineHarness
 import com.befeast.sleepmusic.playback.testing.FakeAudioControl
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** PRD 2 / AC-2: every session unmutes STREAM_MUSIC and applies the start volume (default 15 of 25). */
+/**
+ * PRD 2 / AC-2 after #34: a session never raises (or otherwise changes) STREAM_MUSIC. It plays at
+ * the household level the remote left and fades only the player gain within it.
+ */
 class StartVolumeSessionTest {
     private fun audioCalls(h: EngineHarness) = h.log.filter { it.startsWith("audio.") }
 
-    @Test
-    fun aMutedStreamIsUnmutedAndSetToFifteenOfTwentyFive() {
+    private fun startAt(index: Int, muted: Boolean = false): EngineHarness {
         val h = EngineHarness()
-        h.audio.muted = true
-        h.audio.current = 3
+        h.audio.systemChange(index, muted)
         h.launcherStart()
-        assertEquals(listOf("audio.unmute", "audio.setIndex(15)"), audioCalls(h))
+        return h
+    }
+
+    @Test
+    fun aStreamFarBelowTheOldDefaultStaysWhereItIs() {
+        // The #34 night: a 15-step box at 1 was raised to 9. Now 1 stays 1, on any max.
+        for ((index, max) in listOf(1 to 15, 1 to 25, 3 to 25)) {
+            val log = mutableListOf<String>()
+            val audio = FakeAudioControl(log, maxIndex = max, current = index)
+            val result = StartVolumeSequence.observe(audio)
+            assertEquals(index, audio.index())
+            assertEquals(StartVolumeResult(max, index, false, index, false, false), result)
+            assertTrue(log.isEmpty())
+        }
+        val h = startAt(1)
+        assertEquals(Phase.Playing, h.state.phase)
+        assertEquals(1, h.audio.index())
+        assertEquals(StartVolumeResult(25, 1, false, 1, false, false), h.events.startVolumes.single())
+    }
+
+    @Test
+    fun theHouseholdLevelIsNotLoweredEither() {
+        val h = startAt(22)
+        assertEquals("kept exactly, no downward step", 22, h.audio.index())
+        assertEquals(22, h.events.startVolumes.single().after)
+    }
+
+    @Test
+    fun aMutedStreamStaysMutedAndTheSessionStillStarts() {
+        val h = startAt(16, muted = true)
+        assertEquals(Phase.Playing, h.state.phase)
+        assertTrue(h.audio.isMuted())
+        assertEquals(StartVolumeResult(25, 0, true, 0, true, false), h.events.startVolumes.single())
+    }
+
+    @Test
+    fun aStreamAtZeroStaysAtZero() {
+        val h = startAt(0)
+        assertEquals(Phase.Playing, h.state.phase)
+        assertEquals(0, h.audio.index())
         assertFalse(h.audio.isMuted())
-        assertEquals(15, h.audio.index())
-        val result = h.events.startVolumes.single()
-        assertEquals(StartVolumeResult(25, 0, true, 15, 15, false, false, null), result)
+        assertEquals(StartVolumeResult(25, 0, false, 0, false, false), h.events.startVolumes.single())
     }
 
     @Test
-    fun anUnmutedStreamIsNotSentAMuteAdjustment() {
-        val h = EngineHarness()
-        h.audio.current = 22
-        h.launcherStart()
-        assertEquals(listOf("audio.setIndex(15)"), audioCalls(h))
-        assertEquals("set exactly, also downwards", 15, h.audio.index())
-    }
-
-    @Test
-    fun theLevelIsScaledOnAnotherMax() {
-        val log = mutableListOf<String>()
-        val audio = FakeAudioControl(log, maxIndex = 15)
-        assertEquals(9, StartVolumeSequence.apply(audio, 15).target)
-        assertEquals("audio.setIndex(9)", log.single())
-    }
-
-    @Test
-    fun theStoredLevelIsUsed() {
-        val h = EngineHarness()
-        h.engine.setStartVolumeLevel(18)
-        h.launcherStart()
-        assertEquals(18, h.audio.index())
-        assertEquals(18, h.store.startVolumeLevel)
-    }
-
-    @Test
-    fun anInvalidLevelFallsBackToTheDefault() {
-        val h = EngineHarness()
-        h.engine.setStartVolumeLevel(40)
-        assertEquals(15, h.store.startVolumeLevel)
-    }
-
-    @Test
-    fun appliedAtEverySessionStartAndNeverDuringOne() {
-        val h = EngineHarness()
-        h.launcherStart()
+    fun observedAtEverySessionStartAndNeverChangedDuringOne() {
+        val h = startAt(16)
         h.advance(40_000)
         h.audio.systemChange(7) // the listener turns it down with the remote
         h.engine.togglePause(CommandSource.Remote)
@@ -73,33 +75,21 @@ class StartVolumeSessionTest {
         h.advance(1_000)
         h.engine.setTimerMinutes(30)
         h.advance(25 * 60_000L) // into the sleep fade
-        assertEquals(listOf("audio.setIndex(15)"), audioCalls(h))
         assertEquals("the remote's change stays", 7, h.audio.index())
 
         h.engine.stop(CommandSource.MediaSession)
         h.audio.systemChange(0, muted = true)
         h.launcherStart()
-        assertEquals(listOf("audio.setIndex(15)", "audio.unmute", "audio.setIndex(15)"), audioCalls(h))
-        assertEquals(15, h.audio.index())
-    }
-
-    @Test
-    fun aRefusedVolumeChangeIsRecordedAndTheSessionStillStarts() {
-        val h = EngineHarness()
-        h.audio.muted = true
-        h.audio.denyChanges = true
-        h.launcherStart()
-        assertEquals(Phase.Playing, h.state.phase)
-        val result = h.events.startVolumes.single()
-        assertNotNull(result.error)
-        assertTrue(result.mutedAfter)
+        assertEquals(0, h.audio.index())
+        assertTrue(h.audio.isMuted())
+        assertEquals(listOf(16, 0), h.events.startVolumes.map { it.before })
+        assertTrue(audioCalls(h).isEmpty())
     }
 
     @Test
     fun aFixedVolumeStreamIsReported() {
         val log = mutableListOf<String>()
-        val result = StartVolumeSequence.apply(FakeAudioControl(log, isFixed = true), 15)
+        val result = StartVolumeSequence.observe(FakeAudioControl(log, isFixed = true))
         assertTrue(result.fixed)
-        assertNull(result.error)
     }
 }

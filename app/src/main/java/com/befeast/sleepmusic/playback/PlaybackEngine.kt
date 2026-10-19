@@ -134,7 +134,7 @@ class PlaybackEngine(
         // player that does not exist yet and would start at volume 1.
         lastGain = -1f
         setGain(0f)
-        val volume = StartVolumeSequence.apply(audio, store.startVolumeLevel)
+        val volume = StartVolumeSequence.observe(audio)
         val now = clock.nowMs()
         val minutes = SleepTimer.sanitize(store.timerMinutes)
         val first = queue.begin(eligible) ?: return
@@ -275,10 +275,6 @@ class PlaybackEngine(
         }
         s.timer.rearm(clock.nowMs(), value)
         publish()
-    }
-
-    override fun setStartVolumeLevel(level: Int) {
-        store.startVolumeLevel = StartVolumeLevel.sanitize(level)
     }
 
     // ---- player callbacks ----

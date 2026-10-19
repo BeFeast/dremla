@@ -28,7 +28,7 @@ class NightLogServiceTest {
     @Test fun coldDiagnosticStartDumpsPersistedLogAndStopsWithoutGraphOrSession() {
         val app = org.robolectric.RuntimeEnvironment.getApplication()
         NightLog(app) { 1000 }.apply {
-            sessionStarted(1, 120, StartVolumeResult(25, 0, false, 15, 15, false, false, null))
+            sessionStarted(1, 120, StartVolumeResult(25, 15, false, 15, false, false))
             trackStarted(1, "a")
             sessionEnded(1, EndReason.TimerEnded)
         }

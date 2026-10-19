@@ -48,7 +48,7 @@ class TimerFadeEngineTest {
         assertTrue("port.stopAndClear" in h.log)
         assertEquals(1, h.host.ended)
         assertEquals(listOf(EndReason.TimerEnded), h.events.ends)
-        assertEquals("stream volume only at the start", listOf("audio.setIndex(15)"), h.log.filter { it.startsWith("audio.") })
+        assertEquals("the stream is never written (#34)", 4, h.audio.index())
     }
 
     @Test

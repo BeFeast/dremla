@@ -104,8 +104,4 @@ class RecordingControls(initial: SessionState = SessionState()) : PlaybackContro
     override fun setTimerMinutes(minutes: Int) {
         calls += "setTimerMinutes($minutes)"
     }
-
-    override fun setStartVolumeLevel(level: Int) {
-        calls += "setStartVolumeLevel($level)"
-    }
 }

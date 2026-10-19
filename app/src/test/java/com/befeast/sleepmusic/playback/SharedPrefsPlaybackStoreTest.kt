@@ -26,7 +26,6 @@ class SharedPrefsPlaybackStoreTest {
         assertTrue(store.blocked().isEmpty())
         assertEquals(BagState(), store.bag())
         assertEquals(120, store.timerMinutes)
-        assertEquals(15, store.startVolumeLevel)
     }
 
     @Test
@@ -37,13 +36,11 @@ class SharedPrefsPlaybackStoreTest {
         store.block("amb-003")
         store.saveBag(BagState(setOf("amb-001", "amb-005"), "amb-005"))
         store.timerMinutes = 45
-        store.startVolumeLevel = 18
         val again = SharedPrefsPlaybackStore(app)
         assertEquals(setOf("amb-001", "pno-002"), again.liked())
         assertEquals(setOf("amb-003"), again.blocked())
         assertEquals(BagState(setOf("amb-001", "amb-005"), "amb-005"), again.bag())
         assertEquals(45, again.timerMinutes)
-        assertEquals(18, again.startVolumeLevel)
     }
 
     @Test
@@ -76,11 +73,9 @@ class SharedPrefsPlaybackStoreTest {
     fun invalidStoredValuesReadAsDefaults() {
         app.getSharedPreferences(SharedPrefsPlaybackStore.FILE, Context.MODE_PRIVATE).edit()
             .putInt(SharedPrefsPlaybackStore.KEY_TIMER, 77)
-            .putInt(SharedPrefsPlaybackStore.KEY_START_VOLUME, 99)
             .commit()
         val store = SharedPrefsPlaybackStore(app)
         assertEquals(120, store.timerMinutes)
-        assertEquals(15, store.startVolumeLevel)
         store.timerMinutes = 13
         assertEquals(120, store.timerMinutes)
     }

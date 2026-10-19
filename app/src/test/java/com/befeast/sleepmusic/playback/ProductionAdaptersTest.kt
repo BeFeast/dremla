@@ -4,7 +4,6 @@ import android.content.ComponentName
 import android.content.Intent
 import android.media.AudioManager
 import android.os.Looper
-import com.befeast.sleepmusic.StartVolume
 import com.befeast.sleepmusic.playback.testing.CheckedTestScope
 import com.befeast.sleepmusic.playback.testing.EngineHarness
 import com.befeast.sleepmusic.playback.testing.FakeCollectionSource
@@ -32,23 +31,22 @@ class ProductionAdaptersTest {
 
     @Test
     @Config(shadows = [RecordingAudioManager::class])
-    fun systemAudioUnmutesAndSetsOnlyMusicWithoutShowingUi() {
+    fun systemAudioOnlyReadsAndNeverChangesAnyStream() {
         val manager = app.getSystemService(AudioManager::class.java)
         val shadow = shadowOf(manager) as RecordingAudioManager
-        val others = ShadowAudioManager.ALL_STREAMS.filter { it != AudioManager.STREAM_MUSIC }
-        others.forEach {
-            manager.setStreamVolume(it, 2, 0)
-            shadow.setIsStreamMute(it, true)
+        ShadowAudioManager.ALL_STREAMS.forEach { manager.setStreamVolume(it, 2, 0) }
+        for ((index, muted) in listOf(1 to false, 0 to false, 3 to true)) {
+            manager.setStreamVolume(AudioManager.STREAM_MUSIC, index, 0)
+            shadow.setIsStreamMute(AudioManager.STREAM_MUSIC, muted)
+            val before = ShadowAudioManager.ALL_STREAMS.associateWith { manager.getStreamVolume(it) to manager.isStreamMute(it) }
+            shadow.calls.clear()
+            val result = StartVolumeSequence.observe(SystemAudioControl(manager))
+            assertEquals(emptyList<String>(), shadow.calls)
+            assertEquals(before, ShadowAudioManager.ALL_STREAMS.associateWith { manager.getStreamVolume(it) to manager.isStreamMute(it) })
+            assertEquals(muted, result.wasMuted)
+            assertEquals(muted, result.mutedAfter)
+            assertEquals(result.before, result.after)
         }
-        val before = others.associateWith { manager.getStreamVolume(it) to manager.isStreamMute(it) }
-        shadow.setIsStreamMute(AudioManager.STREAM_MUSIC, true)
-        shadow.calls.clear()
-        val result = StartVolumeSequence.apply(SystemAudioControl(manager), 15)
-        assertFalse(manager.isStreamMute(AudioManager.STREAM_MUSIC))
-        assertEquals(StartVolume.index(15, manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)), manager.getStreamVolume(AudioManager.STREAM_MUSIC))
-        assertEquals(before, others.associateWith { manager.getStreamVolume(it) to manager.isStreamMute(it) })
-        assertNull(result.error)
-        assertEquals(listOf("adjust:${AudioManager.STREAM_MUSIC}:${AudioManager.ADJUST_UNMUTE}:0", "set:${AudioManager.STREAM_MUSIC}:${result.target}:0"), shadow.calls)
     }
 
     @Test

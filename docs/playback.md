@@ -10,7 +10,7 @@ creation waits for a start or bind; a bounded diagnostic start never creates pla
 
 Design of the playback service, the MediaSession and one-press autoplay for PRD contract items 1-4, 8, 9, the media-key part of item 7 and the preference part of item 13 (acceptance AC-2, AC-5, AC-6, AC-10). Later issues plug into the seams in [Seams](#seams-for-later-issues): #4 (collection download, refresh, night log, `dumpsys`), #5 (night screen, sleep routes, morning, `TV off`) and #6 (Compose TV UI).
 
-The ported pure logic (`Fades`, `ShuffleBag`, `StartVolume`, `Library`, `ui/RemainingTime.kt`) is used unchanged; new code wraps it from new files (see [kit-port.md](kit-port.md)).
+The ported pure logic (`Fades`, `ShuffleBag`, `StartVolume`, `Library`, `ui/RemainingTime.kt`) is used unchanged (`StartVolume.kt` stays byte-identical to the kit but is no longer used by the session start since #34); new code wraps it from new files (see [kit-port.md](kit-port.md)).
 
 ## Overview
 
@@ -52,8 +52,8 @@ New code goes to `com.befeast.sleepmusic.playback` (main) unless noted.
 | `SleepTimer.kt` | Timer choices and default, countdown, sleep-fade target |
 | `VolumeEnvelope.kt` | Player gain per tick: session fade-in, track edges, sleep fade (slew-limited upwards), loudness, transport ramp |
 | `Clock.kt` | `Clock` interface, `ElapsedRealtimeClock` |
-| `AudioControl.kt` | `AudioControl` interface over `STREAM_MUSIC`, `StartVolumeResult`, `StartVolumeLevel`, `StartVolumeSequence` (the per-session unmute and start-volume step) |
-| `SystemAudioControl.kt` | `AudioControl` over `AudioManager` |
+| `AudioControl.kt` | Read-only `AudioControl` interface over `STREAM_MUSIC`, `StartVolumeResult`, `StartVolumeSequence` (the per-session observation; nothing is written, #34) |
+| `SystemAudioControl.kt` | `AudioControl` over `AudioManager`, reads only |
 | `PlaybackStore.kt` | `PlaybackStore` interface, `BagState` |
 | `SharedPrefsPlaybackStore.kt` | `PlaybackStore` over the `playback` SharedPreferences file |
 | `CollectionSource.kt` | `CollectionSource` interface, `PlayableCollection` |
@@ -75,17 +75,15 @@ Media3 unstable APIs (`ForwardingPlayer`, and `SimpleBasePlayer` in tests) are u
 ```kotlin
 fun interface Clock { fun nowMs(): Long }                     // SystemClock.elapsedRealtime(); tests: virtual time
 
-interface AudioControl {                                       // STREAM_MUSIC only
+interface AudioControl {                                       // STREAM_MUSIC only, read only (#34)
     val maxIndex: Int
     val isFixed: Boolean
     fun index(): Int
     fun isMuted(): Boolean
-    fun unmute()                                               // adjustStreamVolume(ADJUST_UNMUTE, flags 0)
-    fun setIndex(index: Int)                                   // setStreamVolume(index, flags 0): no volume panel
 }
 data class StartVolumeResult(
     val max: Int, val before: Int, val wasMuted: Boolean,
-    val target: Int, val after: Int, val mutedAfter: Boolean, val fixed: Boolean, val error: String?,
+    val after: Int, val mutedAfter: Boolean, val fixed: Boolean,
 )
 
 interface PlaybackStore {
@@ -96,7 +94,6 @@ interface PlaybackStore {
     fun bag(): BagState
     fun saveBag(state: BagState)
     var timerMinutes: Int                                      // sanitised to SleepTimer.CHOICES, default 120
-    var startVolumeLevel: Int                                  // 1..25, default StartVolume.DEFAULT_LEVEL
 }
 data class BagState(val played: Set<String>, val lastId: String?)
 
@@ -145,7 +142,6 @@ interface PlaybackControls {
     fun toggleLike()
     fun neverAgain()
     fun setTimerMinutes(minutes: Int)
-    fun setStartVolumeLevel(level: Int)
 }
 
 enum class Phase { Idle, Playing, Paused, Fading, Finished }
@@ -208,14 +204,14 @@ For on-device evidence, a shell start counts as a launcher start only with the l
 On a launcher start with something eligible, in this order (one test asserts the order on a shared event log):
 
 1. Player volume 0, written at every start whatever the last session left. `ExoPlayerPort` keeps the value and applies it to the player it creates, so the first session of a process (the player does not exist before the first load and would start at volume 1) is silent from its first sample.
-2. `AudioControl` (`StartVolumeSequence`): unmute `STREAM_MUSIC` if muted, then `setIndex(StartVolume.index(store.startVolumeLevel, maxIndex))` (default level 15 of 25). The index is set exactly, not raised to a minimum: the start volume is the bedtime level. The unmute is sent only when the stream reports muted: on a full-volume HDMI-CEC playback device Android turns every mute adjustment, `ADJUST_UNMUTE` included, into a CEC mute toggle, so an unconditional unmute could mute the TV. A `SecurityException` (do-not-disturb policy) is caught and recorded; the session still starts. The `StartVolumeResult` goes to `SessionEvents` (#4 logs it; it is the sound-level evidence of PRD item 2).
+2. `AudioControl` (`StartVolumeSequence.observe`): read the `STREAM_MUSIC` index and mute state. Nothing is written (#34, Oleg's decision): the app never raises the volume, never lowers it and never unmutes, so the household level the remote left is the session level, and a muted stream or index 0 stays silent until the listener turns the volume up. The interface has no write methods, so no code path can change the stream. The `StartVolumeResult` (before and after the start step) goes to `SessionEvents` (#4 logs it; it is the sound-level evidence of PRD item 2). Until v0.1.0 this step unmuted the stream and set a start level (default 15 of 25); on a 15-step box at 1 that gave 9, loud enough to wake the room.
 3. `PlayQueue.begin`: first track drawn and committed, lookahead drawn; timer armed: `endAt = now + timerMinutes`, fade `min(10 min, timer)`; `sessionId + 1`.
 4. `PlayerPort.load(first, upNext)`, play.
 5. Phase `Playing` published, so a service created next sees an active session.
 6. `PlaybackHost.sessionStarted()` (`startService`; the activity is in the foreground, so this is allowed; Media3 promotes the service to the foreground once the player is ready and playing).
 7. Tick loop started.
 
-The 30 s session fade-in (`Fades.SESSION_FADE_IN_MS`, cubic) counts from the first `onPlaying`, so a slow first load does not shorten it. Every session repeats steps 1-2; pause, resume and skip never touch the stream volume. `setStartVolumeLevel` persists and applies from the next session.
+The 30 s session fade-in (`Fades.SESSION_FADE_IN_MS`, cubic) counts from the first `onPlaying`, so a slow first load does not shorten it. Every session repeats steps 1-2; no step, command or fade ever writes the stream volume.
 
 ## Selection, the lookahead and the MediaSession
 
@@ -359,7 +355,7 @@ OK acts on its release: `onKeyDown` calls `event.startTracking()`, and `onKeyUp`
 | `bag_played` | string set | empty | `apply` |
 | `bag_last` | string | none | `apply` |
 | `timer_min` | int | 120 | `commit` |
-| `start_volume_level` | int | 15 | `commit` |
+| `start_volume_level` | int | (v0.1.0 only) | no longer read or written since #34; a stored value stays as left |
 
 User decisions use `edit(commit = true)` (core-ktx), so a process killed right after a block still has it; bag progress uses `apply`, where a lost write only allows one repeat. Returned sets are copied, never mutated. #5 adds `tv_off` (default true) to the same file.
 
@@ -380,7 +376,7 @@ Preferences never leave the device (PRD item 13): `android:allowBackup="false"` 
 
 - **#4 collection**: implements `CollectionSource` over the download and refresh (`collection` emits the new set; the engine recomputes eligibility and redraws a lookahead that dropped out; the playing track keeps playing, `Library.refresh(keepId = state.track.id)`). The pending launcher start covers "first run downloads, then plays". The night log implements `SessionEvents` (`uiEntry(verdict)`, `sessionStarted(sessionId, timerMinutes, StartVolumeResult)`, `trackStarted`, `sessionEnded(reason)`, `playbackError`); production logs them to logcat (tag `SleepMusic`) until then. `dumpsys` hangs off `PlaybackService.dump`; the service runs only during a session, so #4 has to decide how the log is reachable after the night.
 - **#5 night**: observes `Phase.Finished` with `EndReason.TimerEnded` to run the sleep route, and checks `timerEndLateMs`: an end that came long after `timerEndAtMs` means the box slept through it while paused and woke later, possibly in the morning; adds `tv_off` to `PlaybackStore`; uses `sessionId` and `phase` for the black screen 10 s after start; the morning rules build on the launch verdicts and the finished-session guards. The session already survives a black or sleeping screen through the foreground service and the wake lock; screensaver and inattentive sleep handling stay with #5.
-- **#6 UI**: renders `SessionState` (`track.title`, `track.artist`, `timerRemainingSec` through `remainingParts`, `phase`, `playableCount`); the menu calls `setTimerMinutes` (`SleepTimer.CHOICES`), `setStartVolumeLevel` (`StartVolume.LEVELS`), `toggleLike`, `neverAgain` with `CommandSource.Menu`; Back and the menu key are mapped there; a long press of OK opens the menu from `MainActivity.onKeyLongPress`, which already consumes it, so OK never pauses on the way.
+- **#6 UI**: renders `SessionState` (`track.title`, `track.artist`, `timerRemainingSec` through `remainingParts`, `phase`, `playableCount`); the menu calls `setTimerMinutes` (`SleepTimer.CHOICES`), `toggleLike`, `neverAgain` with `CommandSource.Menu`; Back and the menu key are mapped there; a long press of OK opens the menu from `MainActivity.onKeyLongPress`, which already consumes it, so OK never pauses on the way.
 
 ## Dependencies
 
@@ -404,8 +400,8 @@ Test sources in `app/src/test/java/com/befeast/sleepmusic/playback/`; shared fak
 | `LaunchClassifierTest` | JVM | launcher start for LEANBACK_LAUNCHER and LAUNCHER (create, new intent); passive for saved state, history flag, no category, no action, `SHOW`, null intent | 1 / AC-2 |
 | `MainActivityLaunchTest` | Robolectric | fresh launcher create -> one start; resume (pause, resume) -> no further start; wake (stop, restart, focus back) -> none; config-change recreate -> none; create with saved state (process restart) -> none; recents and explicit start without action -> none; `onNewIntent(SHOW)` -> none; `onNewIntent(launcher)` -> start; with the real engine over a loaded collection all those passive paths load nothing and only the tile pressed afterwards loads the player, once (a configuration change during the night neither restarts nor stops it); with the real engine and the real local source over an empty app directory a launcher start leaves it `Idle` and the activity shows the placeholder without a crash | 1, 7 / AC-2, AC-9 |
 | `NoAutoplayPathsTest` | Robolectric | no receiver for `BOOT_COMPLETED`, `LOCKED_BOOT_COMPLETED` or `MY_PACKAGE_REPLACED`, no `RECEIVE_BOOT_COMPLETED`; `onStartCommand` returns `START_NOT_STICKY`; a service created with an idle engine never touches the player and stops itself; a fresh engine over a populated store is `Idle` with no port, audio or host calls | 1, 12 / AC-2 |
-| `SessionStartTest` | JVM | order: player volume 0, unmute, start index, then load and play, then host start; 30 s fade-in from the first `onPlaying`; every passive verdict (each non-launcher reason, on create and on new intent, collection loaded or still loading) leaves the real engine `Idle` with no pending start; active session ignores a second launcher start; launcher start before the collection loads starts after the load; empty collection -> `Idle`, no calls | 1, 2 / AC-2 |
-| `StartVolumeSessionTest` | JVM | muted stream unmuted; index 15 on max 25, 9 on max 15, stored level 18 -> 18; applied at every session start, never on pause, resume, skip or during the fade; `SecurityException` recorded, session still starts | 2 / AC-2 |
+| `SessionStartTest` | JVM | order: player volume 0, then load and play, then host start, with no stream write; 30 s fade-in from the first `onPlaying`; every passive verdict (each non-launcher reason, on create and on new intent, collection loaded or still loading) leaves the real engine `Idle` with no pending start; active session ignores a second launcher start; launcher start before the collection loads starts after the load; empty collection -> `Idle`, no calls | 1, 2 / AC-2 |
+| `StartVolumeSessionTest` | JVM | #34: a stream far below the old default (1 of 15, 1 and 3 of 25) stays put; a high level is not lowered; muted stays muted, 0 stays 0, the session still starts; observed at every session start and never changed by pause, resume, skip, timer edits or the fade; before/after recorded | 2 / AC-2 |
 | `PlayQueueTest` | JVM | lookahead not committed until it starts; no repeat within a cycle; block of the lookahead redraws it; empty eligible -> no lookahead; state round trip through the store | 3 / AC-5 |
 | `SystemNextRegressionTest` | Robolectric | `SessionPlayer.seekToNext`, `seekToNextMediaItem`, `next`, `seekToNextWindow` call `skip(MediaSession)` and never the inner player's next; the track order equals the Right-key order for the same seed; no repeats in a cycle, blocked tracks never chosen (known defect: system next ignored the bag) | 3 / AC-5 |
 | `MediaSessionRoutingTest` | Robolectric | real `MediaSession(SessionPlayer)` with an in-process `MediaController`, the engine on the real `ExoPlayerPort`: granted commands; `seekToNext` -> engine skip to the bag's lookahead; pause and play; `play` after the end -> nothing; queue edits refused; `onPlaybackResumption`, `onAddMediaItems`, `onSetMediaItems` fail; the service hosts the session; media-button intents through `PlaybackService.onStartCommand`, both without a URI (through `onGetSession`) and addressed to the live session by its URI (as the platform sends them below API 31): NEXT during a session skips, PLAY, PLAY_PAUSE and NEXT after the timer end do nothing | 3, 7 / AC-5, AC-9 |
@@ -416,7 +412,7 @@ Test sources in `app/src/test/java/com/befeast/sleepmusic/playback/`; shared fak
 | `RemoteKeyMapTest` | JVM | the key table above; OK toggles on a tracked, uncancelled release only and its long press is reserved; volume and mute keys map to nothing; repeats ignored | 8 / AC-10 |
 | `MainActivityKeysTest` | Robolectric | `onKeyDown(VOLUME_UP/DOWN/MUTE)` returns false and sends nothing; `volumeControlStream == STREAM_MUSIC`; OK toggles on release, Right skips on press, also through the window's real key dispatch; a long press of OK through the window never toggles; an OK release whose press went elsewhere does nothing; media keys consumed | 8, 7 / AC-10, AC-9 |
 | `LikesAndBlocksTest` | JVM | like toggles and persists; never again persists, drops the like, redraws the lookahead and skips a playing track; blocked ids never drawn over many sessions with a new engine on the same store | 3, 9 / AC-5 |
-| `SharedPrefsPlaybackStoreTest` | Robolectric | defaults; likes, blocks, bag, timer and start volume survive a new store instance; invalid timer sanitised | 9, 15 / AC-13 |
+| `SharedPrefsPlaybackStoreTest` | Robolectric | defaults; likes, blocks, bag and timer survive a new store instance; invalid timer sanitised | 9, 15 / AC-13 |
 | `SessionStateTest` | JVM | phases Idle -> Playing -> Paused -> Playing -> Fading -> Finished(TimerEnded); title, artist, remaining seconds; no emission without a visible change; `timerEndAtMs` published, an on-time end at most one tick late, an end after the box slept through it while paused hours late, only a timer end can be late | 4, 8 (seam for #5, #6) |
 | `PrivacyConfigTest` | Robolectric | `FLAG_ALLOW_BACKUP` unset; both rule files exclude every domain in every section with no `include`; the manifest references both | 13 / AC-12 |
 | `ManifestTest` | Robolectric | `PlaybackService` exported, type `mediaPlayback`, resolves the `MediaSessionService` action; `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `WAKE_LOCK` requested; no `INTERNET`, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`; no `MEDIA_BUTTON` receiver or filter; `MainActivity` is `singleTask` | 1, 7, 13 |
@@ -444,6 +440,6 @@ Collection download and refresh, the night log and `dumpsys` output (#4); black 
 
 `CheckedTestScope` uses a supervisor, a standard test dispatcher and a `CoroutineExceptionHandler` that records failures. `EngineHarness.advance` / `settle` and construction check failures; the two activity test scopes check them in `@After`. Standalone `TestScope` is unsuitable here: without `runTest` it does not fail the test, and it refuses a custom exception handler. `CoroutineFailureTest` deliberately throws in a child to prove both harness checks fail with the original cause.
 
-`ProductionAdaptersTest` runs on SDK 34: `SystemAudioControl` unmutes and sets the real shadowed music stream to `StartVolume.index(15, max)` without touching other streams. Its observing shadow retains the standard AudioManager behavior and records flags to prove both writes use zero, with no volume UI. `ServicePlaybackHost` starts, resumes and stops the correct service component. `AppPlaybackGraph` retains its production wiring while accepting an internal test scope, clock, collection and player factory; its guarding player drives engine skip, and a live service's task removal ends that engine with `Stopped`. Production defaults remain the main dispatcher, elapsed-realtime clock, local collection and ExoPlayer.
+`ProductionAdaptersTest` runs on SDK 34: `SystemAudioControl` only reads the real shadowed music stream (index 1, 0 and muted cases); its recording shadow proves no `setStreamVolume` or `adjustStreamVolume` call reaches any stream and every stream keeps its index and mute state. `ServicePlaybackHost` starts, resumes and stops the correct service component. `AppPlaybackGraph` retains its production wiring while accepting an internal test scope, clock, collection and player factory; its guarding player drives engine skip, and a live service's task removal ends that engine with `Stopped`. Production defaults remain the main dispatcher, elapsed-realtime clock, local collection and ExoPlayer.
 
 New methods in `SessionStartTest` cover launcher resume without a new session, track or timer, the host-before-play order, rejection of empty/unmatched/blocked selection fallback, and `NothingToPlay` after blocking the last selected track. These map respectively to PRD 1/8, 3 and 3/9. The platform guard tests map to PRD 3/7/8/15, adapter tests to 2/3/7/8/15, exact manifest permissions to 13, and coroutine failure detection to 15.

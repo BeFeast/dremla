@@ -42,7 +42,4 @@ interface PlaybackControls {
     fun refreshSleepRoute() {}
 
     fun setTimerMinutes(minutes: Int)
-
-    /** Persists the start volume level (1..25 on the reference scale); applies from the next session. */
-    fun setStartVolumeLevel(level: Int)
 }

@@ -16,7 +16,7 @@ After an approved Forgejo release is installed on the bedroom SEI600GO Android T
 ## Product Contract
 
 1. **One press.** A launcher start plays a random track from the personal selection with a 30 s fade-in. Only a launcher start autoplays; resume, wake, boot or process restart never start music.
-2. **Audible start.** Each session unmutes `STREAM_MUSIC` and applies the start volume (default 15 of 25 steps, adjustable). Verification is at sound level: stream not muted, volume at least the start volume, playback position advancing; `PlaybackState` alone is not evidence.
+2. **Household volume.** The app never raises the volume (Oleg's decision on #34, 2026-10-19). A session keeps `STREAM_MUSIC` exactly as the remote left it, muted or at 0 included, and fades only its own player gain within that level; there is no start-volume setting. Verification is at sound level: the stream index and mute state are the same before and after the start, and the playback position advances; `PlaybackState` alone is not evidence.
 3. **Selection.** Tracks come from the published selection minus tracks marked never again. Shuffle-bag order: no repeats until the whole set has played. A blocked track never returns after restart or reboot. Right on the remote and the system next command follow the same rules.
 4. **Timer.** Default 120 min, selectable in the menu and persisted. The last 10 min fade smoothly to silence without volume steps; playback and the service stop at the end.
 5. **Screen.** About 10 s after start the picture becomes pure black and the music continues; no UI stays visible on the panel.
@@ -44,7 +44,7 @@ All checks run on the target box with an approved release unless stated otherwis
 | ID | Check |
 |---|---|
 | AC-1 | Installed package is `com.befeast.sleepmusic`; versionName, versionCode and signing-certificate SHA-256 equal the release lock of the approved release. |
-| AC-2 | A launcher start with no other key press gives audible music within the fade-in (contract 1-2), confirmed at sound level and by ear. |
+| AC-2 | A launcher start with no other key press gives music within the fade-in at the unchanged household volume (contract 1-2), confirmed at sound level and by ear. |
 | AC-3 | The app starts and plays offline (contract 10). |
 | AC-4 | Collection integrity, resume and refresh (contract 11). |
 | AC-5 | Selection rules including the system next command (contract 3). |

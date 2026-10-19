@@ -28,9 +28,9 @@ A first-run retry has the same focus fill and ring as every menu item.
 - Right: existing skip command when the menu is closed. D-pad navigation in the menu
   never falls through to skip, including the last tile's right edge.
 - Menu: left/right traverses all six existing timer choices, including 45 minutes;
-  up/down reaches start volume, TV off, refresh, like/unlike and never again.
+  up/down reaches TV off, refresh, like/unlike and never again.
   Initial focus is 90 minutes; the ember dot identifies the currently selected timer.
-- Start volume: OK increments the persisted next-night setting, wrapping 25 to 1.
+- There is no start-volume row: the app never changes the system volume (#34).
   TV off toggles its persisted setting; the row also identifies the available sleep route.
 - BACK closes the menu. Outside it, normal activity BACK behavior applies, without
   stopping an active session. Volume/mute keys remain entirely with the system.

@@ -20,7 +20,4 @@ interface PlaybackStore {
 
     /** Sanitised to [SleepTimer.CHOICES]; default 120. */
     var timerMinutes: Int
-
-    /** 1..25 on the reference scale; default 15. */
-    var startVolumeLevel: Int
 }

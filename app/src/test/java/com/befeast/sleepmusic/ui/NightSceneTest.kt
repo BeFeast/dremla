@@ -59,7 +59,7 @@ class NightSceneTest {
     @Test fun dpadReachesAndActivatesEveryMenuControl() {
         val calls = mutableListOf<String>()
         compose.setContent { NightScene(playing, menuOpen = true,
-            onTimer = { calls += "timer-$it" }, onVolume = { calls += "volume" }, onTvOff = { calls += "tv" },
+            onTimer = { calls += "timer-$it" }, onTvOff = { calls += "tv" },
             onRefresh = { calls += "refresh" }, onLike = { calls += "like" }, onNever = { calls += "never" }) }
         fun key(key: Key) = compose.onRoot().performKeyInput { pressKey(key) }
         repeat(3) { key(Key.DirectionLeft) }
@@ -69,13 +69,13 @@ class NightSceneTest {
             key(Key.DirectionCenter)
             if (value != 180) key(Key.DirectionRight)
         }
-        for (tag in listOf("volume", "tv", "refresh", "like", "never")) {
+        for (tag in listOf("tv", "refresh", "like", "never")) {
             key(Key.DirectionDown)
             compose.onNodeWithTag(tag).assertIsFocused()
             assertFill(tag)
             key(Key.DirectionCenter)
         }
-        org.junit.Assert.assertEquals(SleepTimer.CHOICES.map { "timer-$it" } + listOf("volume", "tv", "refresh", "like", "never"), calls)
+        org.junit.Assert.assertEquals(SleepTimer.CHOICES.map { "timer-$it" } + listOf("tv", "refresh", "like", "never"), calls)
     }
     @Test fun firstRunRetryAndRefreshNotice() {
         var retries = 0

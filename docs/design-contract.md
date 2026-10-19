@@ -10,7 +10,7 @@ Status: accepted.
 |---|---|
 | player | black ground; large track title; remaining time in the `1 h 47 min` style (whole minutes, rounded up); warm dim text |
 | player, long title | the title wraps or ellipsizes without overlapping the remaining time |
-| menu | timer length, start volume, `TV off`, refresh collection, like and never again; every item reachable with the D-pad; focus fill visible |
+| menu | timer length, `TV off`, refresh collection, like and never again (no start volume since #34); every item reachable with the D-pad; focus fill visible |
 | download | progress of the first download or a refresh; error with retry |
 | finished | pure black, every pixel `#000000` |
 | black | after about 10 s of playback: pure black |

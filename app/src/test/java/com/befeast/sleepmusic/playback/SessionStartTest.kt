@@ -9,7 +9,7 @@ import org.junit.Test
 /** PRD 1-2 / AC-2: one press starts a random selected track, audible, with a 30 s fade-in. */
 class SessionStartTest {
     @Test
-    fun startOrderSilencesThePlayerSetsTheStreamThenPlaysThenStartsTheService() {
+    fun startOrderSilencesThePlayerThenPlaysThenStartsTheServiceAndNeverTouchesTheStream() {
         val h = EngineHarness()
         h.audio.muted = true
         h.launcherStart()
@@ -18,8 +18,6 @@ class SessionStartTest {
         assertEquals(
             listOf(
                 "port.setVolume(0.0)",
-                "audio.unmute",
-                "audio.setIndex(15)",
                 "port.load($first, $upNext)",
                 "host.sessionStarted",
             ),
