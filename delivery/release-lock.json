@@ -1,10 +1,10 @@
 {
-  "tag": "v0.1.0",
-  "tagSha": "b4c4fd51577e920c8f544e43dec6819eea7bccaf",
-  "assetName": "dremla-0.1.0.apk",
-  "apkSha256": "af54379cc8bc3171d687b139f81d263deab7f3f60d883b50210f430757b67ea9",
-  "versionCode": 1,
-  "versionName": "0.1.0",
+  "tag": "v0.1.1",
+  "tagSha": "16490cfa470ba3141320443eb636e1efb1e57940",
+  "assetName": "dremla-0.1.1.apk",
+  "apkSha256": "31be001c7350319bb69b4dc439b3cab44b5f4c59995ac468b1f1676001f8293d",
+  "versionCode": 2,
+  "versionName": "0.1.1",
   "certificateSha256": "68aae0414c83517bf5d6b0326e0731d61a904ba37049bef7cec8fa748a2e6687",
-  "releaseUrlPath": "/BeFeast/dremla/releases/tag/v0.1.0"
+  "releaseUrlPath": "/BeFeast/dremla/releases/tag/v0.1.1"
 }
