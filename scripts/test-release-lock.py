@@ -346,7 +346,7 @@ class ReleaseTests(unittest.TestCase):
             (scripts / name).write_bytes(Path(__file__).with_name(name).read_bytes())
         for name in ("inspect-apk", "test-hygiene", "check-public-hygiene", "test-forbidden-apis",
                      "check-forbidden-apis", "test-kit-port", "check-kit-port", "test-privacy",
-                     "check-privacy", "test-signing", "test-device", "test-release-lock", "check-release-lock"):
+                     "check-privacy", "test-signing", "test-collection-service", "test-device", "test-release-lock", "check-release-lock"):
             p = scripts / (name + ".sh")
             p.write_text("#!/bin/sh\nexit 0\n")
             p.chmod(0o755)

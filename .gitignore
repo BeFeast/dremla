@@ -14,3 +14,8 @@ local.properties
 
 # Local release preparation (published assets never enter git).
 /release-out/
+
+# Host-only collection state and Python caches.
+/.collection-service/
+__pycache__/
+*.pyc

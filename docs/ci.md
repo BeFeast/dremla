@@ -53,6 +53,14 @@ Locally, run one Gradle build at a time under `nice -n 15`; the scripts default 
 
 11. `scripts/test-privacy.sh` and `scripts/check-privacy.sh`: endpoint and resolved runtime dependency checks, with adversarial fixtures. The Gradle stage writes `app/build/reports/privacy/runtime.txt`; the gate requires the reviewed module allowlist in `docs/runtime-dependencies.txt`. See [collection.md](collection.md).
 
+Both scopes run `collection-service-self-test` (`scripts/test-collection-service.sh`) before
+`device-self-test`. It uses Python 3 standard-library fixtures, temporary state/destination
+directories and ephemeral loopback HTTP. It covers source validation, jobs, review gates,
+immutable publication, manifest-last failure recovery, history and rollback. When ffmpeg and
+ffprobe are installed it also checks generated audio against the shipped loudness target and
+rejection thresholds; without ffmpeg it prints `SKIPPED (no ffmpeg)`. No external network or
+live acquisition is used. See [collection-service.md](collection-service.md).
+
 Both scopes run `device-self-test` (`scripts/test-device.sh`) near the release-lock stages. Its offline fake-adb fixtures exercise probe, delivery and identity checks with an isolated fake SDK, minimal PATH, temporary home/config/state and a dead adb-server port.
 
 The default scope (`full`, used outside CI) adds a real read-only `device-identity` stage: installed package, versions, APK SHA-256 and certificate must match the committed release lock. Missing delivery configuration fails with `device identity: no delivery config (use DREMLA_OUTCOME_SCOPE=repo for host-only checks)`. Repo scope never checks a real device. Unknown scope values fail. See [delivery.md](delivery.md).

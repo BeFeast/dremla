@@ -8,7 +8,7 @@
 # lint, APK inspection, the hygiene check, the forbidden-API check and the brand-kit port check,
 # each check with its self-test, and the self-test of the release signing scripts (throwaway
 # keystore, stub curl, no network; needs JAVA_HOME or keytool on PATH, jq and shred). The
-# offline fake-device delivery self-tests run in both scopes. After the
+# offline collection-service and fake-device delivery self-tests run in both scopes. After the
 # Gradle stage it prints the unit-test counts per class. Every stage runs even when an earlier one
 # failed; the summary lists all of them and the exit status is non-zero if any check failed. The
 # script does not lower its own priority; callers wrap it (CI uses nice -n 19).
@@ -132,6 +132,7 @@ run_stage "kit-port" scripts/check-kit-port.sh
 run_stage "privacy-self-test" scripts/test-privacy.sh
 run_stage "privacy" scripts/check-privacy.sh
 run_stage "signing-self-test" scripts/test-signing.sh
+run_stage "collection-service-self-test" scripts/test-collection-service.sh
 run_stage "device-self-test" scripts/test-device.sh
 run_stage "release-lock-self-test" scripts/test-release-lock.sh
 run_stage "release-lock" scripts/check-release-lock.sh
