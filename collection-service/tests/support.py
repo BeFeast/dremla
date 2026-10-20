@@ -43,6 +43,9 @@ class ServiceCase(unittest.TestCase):
         self.service.set_review(job["item"]["id"], {"approved": True, "job": job["id"]})
         return job
 
+    def publish(self, parent=0, confirm=True):
+        return self.service.publish(parent, confirm, self.service.review()["proposalRevision"])
+
     def assert_code(self, code, fn):
         with self.assertRaises(ServiceError) as raised:
             fn()

@@ -57,7 +57,7 @@ class DraftTests(ServiceCase):
 
     def test_dedup_against_current_and_edit_fields(self):
         self.approved()
-        self.service.publish(0, True)
+        self.publish(0, True)
         draft = self.service.add_draft(PLAYLIST)
         first = draft["items"][0]
         self.assertTrue(first["inCollection"])

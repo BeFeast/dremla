@@ -2,7 +2,7 @@ from unittest.mock import patch
 import json
 import threading
 
-from dremla_collection.common import atomic_write, read_json
+from dremla_collection.common import ServiceError, atomic_write, digest, read_json
 
 from dremla_collection.adapters import FixtureAcquisition, FixtureProcessor
 from dremla_collection.jobs import CollectionService
@@ -167,41 +167,41 @@ class JobTests(ServiceCase):
 class ReviewTests(ServiceCase):
     def test_empty_selection_and_unapproved(self):
         job = self.ready()
-        self.assert_code("invalid-manifest", lambda: self.service.publish(0, True))
+        self.assert_code("invalid-manifest", lambda: self.publish(0, True))
         self.assert_code("unapproved", lambda: self.service.set_review(job["item"]["id"], {"inSelection": True}))
         self.service.set_review(job["item"]["id"], {"approved": True, "job": job["id"], "inSelection": False})
-        self.assert_code("invalid-manifest", lambda: self.service.publish(0, True))
+        self.assert_code("invalid-manifest", lambda: self.publish(0, True))
 
     def test_not_ready_and_running_approved_job(self):
         job = self.approved()
         for state in ("failed", "processing"):
             self.service.jobs[job["id"]]["state"] = state
-            self.assert_code("not-ready", lambda: self.service.publish(0, True))
+            self.assert_code("not-ready", lambda: self.publish(0, True))
             self.assert_code("not-ready", lambda: self.service.set_review(job["item"]["id"], {"approved": True, "job": job["id"]}))
         self.service.jobs[job["id"]]["state"] = "ready"
         self.service.acquisition.delay = 0.01
         draft = self.service.add_draft(SINGLE)
         other = self.service.process_draft(draft["id"])[0]
-        self.assert_code("job-running", lambda: self.service.publish(0, True))
+        self.assert_code("job-running", lambda: self.publish(0, True))
         self.service.control(other["id"], "cancel")
 
     def test_rejected_cannot_bypass_publish_gate(self):
         job = self.approved()
         self.service.jobs[job["id"]]["result"]["reject_reasons"] = ["LRA 18.0 LU > 12"]
-        self.assert_code("processor-rejected", lambda: self.service.publish(0, True))
+        self.assert_code("processor-rejected", lambda: self.publish(0, True))
 
     def test_stale_parent_confirmation_and_current_selection(self):
         job = self.approved()
-        self.assert_code("confirmation-required", lambda: self.service.publish(0, False))
-        self.assert_code("stale-parent", lambda: self.service.publish(1, True))
-        first = self.service.publish(0, True)
-        self.assert_code("stale-parent", lambda: self.service.publish(0, True))
-        self.assert_code("stale-parent", lambda: self.service.publish(True, True))
+        self.assert_code("confirmation-required", lambda: self.publish(0, False))
+        self.assert_code("stale-parent", lambda: self.publish(1, True))
+        first = self.publish(0, True)
+        self.assert_code("stale-parent", lambda: self.publish(0, True))
+        self.assert_code("stale-parent", lambda: self.publish(True, True))
         self.assertEqual(self.service.review()["proposed"]["selection"], first["selection"])
         self.assertFalse(self.service.review_decisions)
         self.service.set_review(job["item"]["id"], {"inSelection": False})
         self.assertEqual(self.service.review()["diff"]["removedFromSelection"], first["selection"])
-        self.assert_code("invalid-manifest", lambda: self.service.publish(1, True))
+        self.assert_code("invalid-manifest", lambda: self.publish(1, True))
 
     def test_review_decisions_survive_restart(self):
         self.approved()
@@ -215,7 +215,7 @@ class ReviewTests(ServiceCase):
         piano = self.ready("https://youtu.be/fxPiano0001")
         track = piano["item"]["id"]
         self.service.set_review(track, {"approved": True, "job": piano["id"], "inSelection": False})
-        current = self.service.publish(0, True)
+        current = self.publish(0, True)
         draft = self.service.add_draft("https://youtu.be/fxPiano0001")
         self.service.edit_item(draft["id"], track, {"include": True})
         revision = self.wait_job(self.service.process_draft(draft["id"])[0]["id"])
@@ -255,7 +255,7 @@ class ReviewTests(ServiceCase):
                 self.service._transition(self.service.jobs[later["id"]], state)
                 decision = self.service.set_review(track, {"approved": True, "job": reviewed["id"]})
                 self.assertEqual(decision["job"], reviewed["id"])
-                published = self.service.publish(self.service.storage.current()["version"], True)
+                published = self.publish(self.service.storage.current()["version"], True)
                 self.assertEqual(published["tracks"][0]["title"], reviewed["item"]["title"])
                 self.assertEqual(published["selection"], [track])
         self.assert_code("invalid-request", lambda: self.service.set_review(track, {"approved": True}))
@@ -264,3 +264,160 @@ class ReviewTests(ServiceCase):
         self.service.add_draft("https://youtu.be/fxPiano0001")
         self.service.process_draft(next(reversed(self.service.drafts)))
         self.assert_code("not-ready", lambda: self.service.set_review("yt-fxPiano0001", {"approved": True, "job": reviewed["id"]}))
+
+
+class RecoveryTests(ServiceCase):
+    def restart(self):
+        self.service.close()
+        self.service = self.open_service()
+
+    def immutable_files(self):
+        return {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in self.service.storage.root.rglob("*")
+                if p.is_file() and p.relative_to(self.service.storage.root).as_posix()
+                not in ("manifest.json", "snapshots/index.json")}
+
+    def assert_unchanged(self, before):
+        for p, expected in before.items():
+            self.assertEqual((p.read_bytes(), p.stat().st_mtime_ns), expected)
+
+    def test_every_interruption_review_changes_restart_and_recovery(self):
+        initial_root = self.root
+        for first_publication in (False, True):
+            for boundary in ("after-assets", "after-snapshot", "after-index"):
+                with self.subTest(first=first_publication, boundary=boundary):
+                    self.service.close()
+                    self.root = initial_root / (str(first_publication) + boundary)
+                    self.service = self.open_service()
+                    ambient = self.approved()
+                    parent = 0 if first_publication else self.publish()["version"]
+                    original = self.service.storage.current()
+                    piano = self.ready("https://youtu.be/fxPiano0001")
+                    self.service.set_review(piano["item"]["id"], {"approved": True, "job": piano["id"]})
+                    proposal = self.service.review()["proposed"]
+                    before = self.immutable_files()
+                    def fail(stage):
+                        if stage == boundary:
+                            raise OSError("fixture interruption")
+                    self.service.storage.failure_hook = fail
+                    with self.assertRaises(OSError):
+                        self.publish(parent)
+                    self.assertEqual(self.service.storage.current(), original)
+                    self.assert_unchanged(before)
+                    if boundary != "after-assets":
+                        self.assertTrue(self.service.review()["pending"]["matchesProposal"])
+                    self.service.set_review(piano["item"]["id"], {"approved": False, "inSelection": False})
+                    self.service.set_review(ambient["item"]["id"], {"approved": True, "job": ambient["id"], "inSelection": True})
+                    decisions = self.service.review_decisions.copy()
+                    self.restart()
+                    view = self.service.review()
+                    self.assertEqual(view["current"], original)
+                    self.assertEqual(self.service.review_decisions, decisions)
+                    if boundary == "after-assets":
+                        self.assertIsNone(view["pending"])
+                        self.assert_code("not-found", lambda: self.service.complete_pending("0" * 64, True))
+                        # Copied assets reserve no version until an immutable record exists.
+                        self.assertEqual(self.publish(parent)["version"], parent + 1)
+                    else:
+                        pending = view["pending"]
+                        record = self.service.storage.root / f"snapshots/v{parent + 1}/manifest.json"
+                        raw = record.read_bytes()
+                        self.assertEqual((pending["version"], pending["sha256"], pending["matchesProposal"],
+                                          pending["counts"], pending["rollbackOf"]),
+                                         (parent + 1, digest(record), False, {"tracks": 2, "selection": 2}, None))
+                        self.assertEqual(pending["generated"], read_json(record)["generated"])
+                        self.assertEqual(pending["selection"], [dict(id=t["id"], title=t["title"])
+                                                               for t in proposal["tracks"]])
+                        preserved = self.immutable_files()
+                        for operation, code, status in (
+                                (lambda: self.publish(parent), "pending-publication", 409),
+                                (lambda: self.service.rollback(1, parent, True), "pending-publication", 409),
+                                (lambda: self.service.complete_pending("0" * 64, True), "stale-pending", 409),
+                                (lambda: self.service.complete_pending(pending["sha256"], False), "confirmation-required", 400)):
+                            with self.assertRaises(ServiceError) as raised:
+                                operation()
+                            self.assertEqual((raised.exception.code, raised.exception.status), (code, status))
+                        self.assertEqual(self.service.storage.current(), original)
+                        # Completion must not consult jobs, review or their staging assets.
+                        with patch.object(self.service, "_proposal", side_effect=AssertionError("proposal consulted")):
+                            self.service.complete_pending(pending["sha256"], True)
+                        self.assertEqual((self.service.storage.root / "manifest.json").read_bytes(), raw)
+                        self.assert_unchanged(preserved)
+                        self.assertEqual(self.service.review_decisions, decisions)
+                        self.assertIsNone(self.service.review()["pending"])
+                        self.assert_code("not-found", lambda: self.service.complete_pending(pending["sha256"], True))
+                    third = self.publish(parent + 1)
+                    self.assertEqual(third["version"], parent + 2)
+                    self.assertEqual(third["selection"], [ambient["item"]["id"]])
+                    history = self.service.storage.history()
+                    self.assertEqual([e["version"] for e in history], list(range(1, parent + 3)))
+                    for entry in history:
+                        self.assertEqual(entry["sha256"], digest(self.service.storage.root /
+                                         f"snapshots/v{entry['version']}/manifest.json"))
+                    self.assert_unchanged(before)
+
+    def test_interrupted_rollback_preserves_target_after_restart(self):
+        self.approved()
+        first = self.publish()
+        piano = self.ready("https://youtu.be/fxPiano0001")
+        self.service.set_review(piano["item"]["id"], {"approved": True, "job": piano["id"]})
+        self.publish(1)
+        for boundary in ("after-snapshot", "after-index"):
+            with self.subTest(boundary=boundary):
+                parent = self.service.storage.current()["version"]
+                before = self.immutable_files()
+                def fail(stage):
+                    if stage == boundary:
+                        raise OSError("rollback interruption")
+                self.service.storage.failure_hook = fail
+                with self.assertRaises(OSError):
+                    self.service.rollback(1, parent, True)
+                self.restart()
+                pending = self.service.review()["pending"]
+                self.assertEqual((pending["version"], pending["rollbackOf"], pending["counts"]),
+                                 (parent + 1, 1, {"tracks": 1, "selection": 1}))
+                self.assert_code("pending-publication", lambda: self.service.rollback(2, parent, True))
+                record = self.service.storage.root / f"snapshots/v{parent + 1}/manifest.json"
+                raw = record.read_bytes()
+                # A second interruption during completion is explicitly recoverable too.
+                self.service.storage.failure_hook = fail if boundary == "after-index" else lambda stage: None
+                if boundary == "after-index":
+                    with self.assertRaises(OSError):
+                        self.service.complete_pending(pending["sha256"], True)
+                    self.assertEqual(self.service.storage.current()["version"], parent)
+                    self.restart()
+                # A review decision made while the rollback was pending is cleared by completing it,
+                # as an uninterrupted rollback clears the review.
+                self.service.set_review(piano["item"]["id"], {"approved": True, "job": piano["id"]})
+                self.assertTrue(self.service.review_decisions)
+                completed = self.service.complete_pending(pending["sha256"], True)
+                self.assertEqual(completed["tracks"], first["tracks"])
+                self.assertEqual(self.service.review_decisions, {})
+                self.restart()
+                self.assertEqual(self.service.review_decisions, {})
+                self.assertEqual((self.service.storage.root / "manifest.json").read_bytes(), raw)
+                self.assertEqual(self.service.storage.history()[-1]["rollbackOf"], 1)
+                self.assert_unchanged(before)
+
+    def test_pending_visible_and_completable_when_proposal_cannot_be_built(self):
+        job = self.approved()
+        def fail(stage):
+            if stage == "after-snapshot":
+                raise OSError("interruption")
+        self.service.storage.failure_hook = fail
+        with self.assertRaises(OSError):
+            self.publish()
+        self.restart()
+        pending = self.service.review()["pending"]
+        for state in ("interrupted", "ready"):
+            self.service.jobs[job["id"]]["state"] = state
+            if state == "ready":
+                audio = self.root / "state/work" / job["id"] / "1" / job["result"]["audio"]
+                audio.unlink()
+            view = self.service.review()
+            self.assertIsNone(view["proposalRevision"])
+            self.assertIsNone(view["proposed"])
+            self.assertEqual(view["pending"]["sha256"], pending["sha256"])
+            self.assertFalse(view["pending"]["matchesProposal"])
+            self.assert_code("pending-publication", lambda: self.service.publish(0, True, "0" * 64))
+        self.service.complete_pending(pending["sha256"], True)
+        self.assertEqual(self.service.storage.current()["version"], 1)

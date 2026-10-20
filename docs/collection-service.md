@@ -45,12 +45,15 @@ serving path is a later, separately approved step.
      preview content revisions), all repeated in the confirmation;
    - the version number that will be written.
 
-   Publish happens only on an explicit confirmation that names the parent version. It is refused
+   Publish happens only on an explicit confirmation that names the parent version and the
+   `proposalRevision` returned with the reviewed state. It is refused
    when:
    - the selection is empty;
    - an approved track's job is not `ready`;
    - any job is still running for an approved track;
    - the parent version is no longer current;
+   - the proposal changed since the operator reviewed it;
+   - an interrupted publication is awaiting explicit completion;
    - the authoring validator fails.
 6. **History and rollback.** Every published version stays listed. A rollback republishes an old
    version's manifest as a **new** version: the version number keeps increasing, and the history
@@ -160,15 +163,52 @@ Order of a publish:
    fail the publish.
 2. Validate the complete snapshot against the files on disk.
 3. Write `snapshots/v<N>/manifest.json`, then `snapshots/index.json`, each through a temporary file
-   and a rename.
+   and a rename. For rollback, first persist the new entry in the existing index so its
+   `rollbackOf` survives an interruption immediately after the snapshot write. History hides
+   uncommitted entries. If no snapshot was written, that entry reserves no version and is
+   replaced by the next publication.
 4. Replace `manifest.json` atomically.
 
 A failure before step 4 leaves the previous `manifest.json` and every file it references
 unchanged. Nothing is ever deleted by a publish or a rollback. Retention is a later decision.
-If a failure strands the next immutable snapshot record before the current manifest commits,
-retry with the original proposed content. The record and its generated time are reused;
-different content returns `snapshot-conflict` rather than overwriting that record. History
-only lists versions committed by the current manifest, including after a restart.
+History only lists versions committed by the current manifest, including after a restart.
+
+### Media publication recovery and reviewed proposals (#52)
+
+`GET /api/review` returns `proposalRevision`, a SHA-256 of the proposed manifest content without
+`version` and `generated`. Canonical encoding uses sorted object keys, compact JSON and UTF-8;
+array order is preserved. The confirmation dialog sends the revision of exactly the displayed
+proposal along with `parentVersion` and `confirm: true`. Another tab changing approvals or
+selection without publishing causes `409 stale-proposal` and writes nothing. Refresh and review
+again to publish the changed proposal. If the proposal returns to exactly the same content, its
+revision is valid again; this is a content check, not an edit lock. When the proposal cannot be
+computed, `proposed` and `proposalRevision` are null and `error` explains why.
+
+If `snapshots/v<N+1>/manifest.json` exists while current remains N (including N=0 before the
+first publication), the review returns `pending` with `version`, `generated`, the SHA-256 of the
+stored record bytes, `counts: {tracks, selection}`, `parent`, `rollbackOf` (null unless rollback),
+ordered `selection: [{id, title}]`, and `matchesProposal`. Otherwise `pending` is null. The page
+shows an **Interrupted publication** panel and disables normal publish. Normal publish and
+rollback both return `409 pending-publication`, even when the proposal still matches. The stored
+record is never rewritten, moved, deleted or reused implicitly. A failure after asset copying
+but before the snapshot write leaves no pending record; content-addressed assets remain reusable.
+
+Review the panel and choose **Make version N+1 current**. This sends
+`POST /api/publish/pending/complete {sha256, confirm: true}`. No pending record returns
+`404 not-found`; a different SHA returns `409 stale-pending`; absent or non-true confirmation
+returns `400 confirmation-required`. Unknown fields return `400 invalid-request`. Completion
+validates the stored manifest against the published asset tree, including both audio and preview
+hashes, then writes history and current **last** from its exact bytes, without consulting jobs or
+staging assets. A malformed record, invalid recovery index entry or missing/corrupt published
+asset returns the fixed `400 invalid-base` error without committing. Startup also validates any
+pending record and refuses invalid pending data with `invalid-base`.
+
+Completing an interrupted publish keeps later review decisions. Review those changes against the
+recovered current and publish them as N+2. Completing an interrupted rollback retains its
+`rollbackOf` target and clears the review, as an uninterrupted rollback does. The page
+refreshes after `stale-*`, `pending-publication`, `not-found` and `local-failure` responses and
+shows the returned message. The manifest contract, content-addressed assets and published layout
+are unchanged.
 
 ## Manifest written
 
@@ -220,9 +260,10 @@ header `X-Dremla-Request: 1`, so a cross-origin form cannot trigger them.
 | `POST /api/drafts/<id>/process` | queue jobs for included items |
 | `GET /api/jobs` | `{jobs: [...], workerAlive: boolean}`; UI shows an error banner when the worker is not alive |
 | `POST /api/jobs/<id>/cancel`, `/retry` | job control |
-| `GET /api/review` | ready results, current collection, proposed selection, diff |
+| `GET /api/review` | ready results, current collection, proposed selection, diff, `proposalRevision`, `pending` |
 | `POST /api/review/<track>` | `approved`, `inSelection`; approval also requires `job: <jobId>` |
-| `POST /api/publish` `{parentVersion, confirm: true}` | explicit publish |
+| `POST /api/publish` `{parentVersion, proposalRevision, confirm: true}` | explicit publish of the reviewed proposal; missing revision or unexpected fields return `400 invalid-request` |
+| `POST /api/publish/pending/complete` `{sha256, confirm: true}` | explicitly make the reviewed interrupted snapshot current |
 | `GET /api/snapshots` | history |
 | `POST /api/snapshots/<n>/rollback` `{parentVersion, confirm: true}` | rollback as a new version |
 | `GET /media/...` | previews of ready jobs and published assets |
@@ -282,8 +323,9 @@ and illustrative; only the ffmpeg processor measures the encoded audio.
 
 The API returns `{error, message}` for failures, with fixed codes such as `invalid-url`,
 `unknown-fixture`, `acquisition-failed`, `processing-failed`, `not-ready`, `job-running`,
-`processor-rejected`, `unapproved`, `stale-parent`, `confirmation-required`, `invalid-manifest`,
-`asset-conflict` and `snapshot-conflict`. Stale parents and review conflicts return HTTP 409;
+`processor-rejected`, `unapproved`, `stale-parent`, `stale-proposal`, `confirmation-required`,
+`invalid-request`, `invalid-manifest`, `invalid-base`, `asset-conflict`, `pending-publication`,
+`stale-pending`, `not-found` and `local-failure`. Stale parents/proposals and publication conflicts return HTTP 409;
 Host/CSRF failures return 403. Diagnostics never include raw tool exceptions or local paths.
 
 ## Verification
@@ -297,6 +339,8 @@ directory and loopback port. It covers:
 - the review and publish gates;
 - immutable assets, the manifest written last (with a failure injected between the steps), checksums,
   history and rollback;
+- interrupted media publication and rollback, explicit completion after review changes and restart,
+  invalid pending assets, and content-bound confirmation across two tabs;
 - the full HTTP flow with the guards.
 
 The `ffmpeg` processor test runs on generated audio when ffmpeg is on `PATH` (the builder and CI).

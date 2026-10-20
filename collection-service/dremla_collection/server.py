@@ -140,7 +140,13 @@ class Handler(BaseHTTPRequestHandler):
                 elif parts[:2] == ["api", "review"] and len(parts) == 3:
                     result = service.set_review(parts[2], body)
                 elif parts == ["api", "publish"]:
-                    result = service.publish(body.get("parentVersion"), body.get("confirm"))
+                    require({"parentVersion", "proposalRevision"} <= set(body) <=
+                            {"parentVersion", "proposalRevision", "confirm"},
+                            "invalid-request", "Missing or unexpected request fields.")
+                    result = service.publish(body.get("parentVersion"), body.get("confirm"), body.get("proposalRevision"))
+                elif parts == ["api", "publish", "pending", "complete"]:
+                    require(set(body) <= {"sha256", "confirm"}, "invalid-request", "Unexpected request fields.")
+                    result = service.complete_pending(body.get("sha256"), body.get("confirm"))
                 elif parts[:2] == ["api", "snapshots"] and len(parts) == 4 and parts[3] == "rollback" and parts[2].isdigit():
                     result = service.rollback(int(parts[2]), body.get("parentVersion"), body.get("confirm"))
                 else:

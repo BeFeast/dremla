@@ -1,10 +1,12 @@
 import copy
+import json
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
-from dremla_collection.common import ServiceError, digest, json_bytes, read_json
-from dremla_collection.publish import FilesystemStorage
+from dremla_collection.common import ServiceError, atomic_write, digest, json_bytes, read_json
+from dremla_collection.publish import FilesystemStorage, revision
 from dremla_collection.validate import ROOT_FIELDS, TRACK_FIELDS, validate
 from support import publication
 
@@ -18,7 +20,7 @@ class StorageCase(unittest.TestCase):
         self.snapshot, self.assets = publication(self.root / "inputs")
 
     def publish(self, parent=0):
-        return self.storage.publish(self.snapshot, self.assets, parent, True)
+        return self.storage.publish(self.snapshot, self.assets, parent, True, revision(self.snapshot))
 
 
 class PublicationTests(StorageCase):
@@ -60,28 +62,40 @@ class PublicationTests(StorageCase):
         with self.assertRaisesRegex(ServiceError, "Source asset hash mismatch"):
             self.storage.put_asset(source, relative)
 
-    def test_manifest_last_failure_at_each_boundary_and_retry(self):
+    def test_manifest_last_failure_at_each_boundary_and_completion(self):
         self.publish()
-        original = (self.storage.root / "manifest.json").read_bytes()
         old_files = {p: (self.storage.root / p).read_bytes() for p in self.assets}
         original_record = (self.storage.root / "snapshots/v1/manifest.json").read_bytes()
         self.snapshot["tracks"][0]["title"] = "Later Lantern"
         for boundary in ("after-assets", "after-snapshot", "after-index"):
+            parent = self.storage.current()["version"]
+            original = (self.storage.root / "manifest.json").read_bytes()
             def fail(stage):
                 if stage == boundary:
                     raise OSError("injected failure")
             self.storage.failure_hook = fail
             with self.subTest(boundary=boundary), self.assertRaises(OSError):
-                self.publish(1)
+                self.publish(parent)
             self.assertEqual((self.storage.root / "manifest.json").read_bytes(), original)
             for path, content in old_files.items():
                 self.assertEqual((self.storage.root / path).read_bytes(), content)
             self.assertEqual((self.storage.root / "snapshots/v1/manifest.json").read_bytes(), original_record)
-            self.assertEqual([e["version"] for e in self.storage.history()], [1])
+            self.assertEqual([e["version"] for e in self.storage.history()], list(range(1, parent + 1)))
             validate(read_json(self.storage.root / "manifest.json"), self.storage.root)
-        self.storage = FilesystemStorage(self.storage.root)
-        self.assertEqual(self.publish(1)["version"], 2)
-        self.assertEqual([e["version"] for e in self.storage.history()], [1, 2])
+            self.storage = FilesystemStorage(self.storage.root)
+            if boundary == "after-assets":
+                self.assertIsNone(self.storage.pending())
+                self.assertEqual(self.publish(parent)["version"], parent + 1)
+            else:
+                record = self.storage.root / f"snapshots/v{parent + 1}/manifest.json"
+                before = record.read_bytes()
+                with self.assertRaises(ServiceError) as raised:
+                    self.publish(parent)
+                self.assertEqual((raised.exception.code, raised.exception.status), ("pending-publication", 409))
+                self.storage.complete_pending(digest(record), True)
+                self.assertEqual((self.storage.root / "manifest.json").read_bytes(), before)
+                self.assertEqual(record.read_bytes(), before)
+        self.assertEqual([e["version"] for e in self.storage.history()], [1, 2, 3, 4])
 
     def test_validation_failure_preserves_current(self):
         self.publish()
@@ -97,7 +111,7 @@ class PublicationTests(StorageCase):
         for parent, confirm, code in ((0, True, "stale-parent"), (True, True, "stale-parent"),
                                      (1, False, "confirmation-required"), (1, 1, "confirmation-required")):
             with self.subTest(parent=parent, confirm=confirm), self.assertRaises(ServiceError) as raised:
-                self.storage.publish(self.snapshot, self.assets, parent, confirm)
+                self.storage.publish(self.snapshot, self.assets, parent, confirm, revision(self.snapshot))
             self.assertEqual(raised.exception.code, code)
         self.assertEqual(self.storage.current()["version"], 1)
 
@@ -179,9 +193,108 @@ class PublicationTests(StorageCase):
         before = (self.storage.root / "snapshots/v1/manifest.json").read_bytes()
         self.snapshot["tracks"][0]["title"] = "Different Proposal"
         self.storage.failure_hook = lambda stage: None
-        with self.assertRaisesRegex(ServiceError, "original content"):
+        with self.assertRaisesRegex(ServiceError, "interrupted publication"):
             self.publish()
         self.assertEqual((self.storage.root / "snapshots/v1/manifest.json").read_bytes(), before)
+
+    def test_pending_startup_and_completion_refuse_invalid_record_or_assets(self):
+        def fail(stage):
+            if stage == "after-snapshot":
+                raise OSError("interruption")
+        self.storage.failure_hook = fail
+        with self.assertRaises(OSError):
+            self.publish()
+        self.storage.failure_hook = lambda stage: None
+        record = self.storage.root / "snapshots/v1/manifest.json"
+        original = record.read_bytes()
+        sha = digest(record)
+        for path in (record, *(self.storage.root / p for p in self.assets)):
+            saved = path.read_bytes()
+            for content in (None, b"corrupt"):
+                if path == record and content is None:
+                    continue
+                with self.subTest(path=path.name, missing=content is None):
+                    if content is None:
+                        path.unlink()
+                    else:
+                        path.write_bytes(content)
+                    for operation in (lambda: FilesystemStorage(self.storage.root),
+                                      lambda: self.storage.complete_pending(sha, True)):
+                        with self.assertRaises(ServiceError) as raised:
+                            operation()
+                        self.assertEqual(raised.exception.code, "invalid-base")
+                    self.assertFalse((self.storage.root / "manifest.json").exists())
+                    self.assertFalse((self.storage.root / "snapshots/index.json").exists())
+                    path.write_bytes(saved)
+        wrong_version = read_json(record)
+        wrong_version["version"] = 2
+        record.write_bytes(json_bytes(wrong_version))
+        with self.assertRaises(ServiceError) as raised:
+            FilesystemStorage(self.storage.root)
+        self.assertEqual(raised.exception.code, "invalid-base")
+        record.write_bytes(original)
+        self.storage.complete_pending(sha, True)
+        self.assertEqual((self.storage.root / "manifest.json").read_bytes(), original)
+
+    def test_rollback_intent_before_record_does_not_reserve_version(self):
+        self.publish()
+        def fail_record(path, data):
+            if path == self.storage.root / "snapshots/v2/manifest.json":
+                raise OSError("before record")
+            atomic_write(path, data)
+        with patch("dremla_collection.publish.atomic_write", side_effect=fail_record):
+            with self.assertRaises(OSError):
+                self.storage.rollback(1, 1, True)
+        self.storage = FilesystemStorage(self.storage.root)
+        self.assertIsNone(self.storage.pending())
+        self.snapshot["tracks"][0]["title"] = "Different proposal"
+        def fail(stage):
+            if stage == "after-snapshot":
+                raise OSError("after record")
+        self.storage.failure_hook = fail
+        with self.assertRaises(OSError):
+            self.publish(1)
+        self.storage = FilesystemStorage(self.storage.root)
+        self.assertIsNone(self.storage.pending()[2])
+        record = self.storage.root / "snapshots/v2/manifest.json"
+        self.storage.complete_pending(digest(record), True)
+        self.assertIsNone(self.storage.history()[-1]["rollbackOf"])
+
+    def test_revision_is_canonical_and_content_addressed(self):
+        reordered = dict(selection=self.snapshot["selection"], tracks=[dict(reversed(list(t.items())))
+                                                                    for t in self.snapshot["tracks"]])
+        self.assertEqual(revision(self.snapshot), revision(reordered))
+        self.assertEqual(revision(self.snapshot), revision(dict(reordered, version=9, generated="ignored")))
+        before = {p: p.read_bytes() for p in self.storage.root.rglob("*") if p.is_file()}
+        for value, code in ((None, "invalid-request"), ("0" * 64, "stale-proposal")):
+            with self.assertRaises(ServiceError) as raised:
+                self.storage.publish(self.snapshot, self.assets, 0, True, value)
+            self.assertEqual(raised.exception.code, code)
+        self.assertEqual({p: p.read_bytes() for p in self.storage.root.rglob("*") if p.is_file()}, before)
+
+    def test_completion_preserves_record_encoding_and_validates_pending_index(self):
+        def fail(stage):
+            if stage == "after-snapshot":
+                raise OSError("interruption")
+        self.storage.failure_hook = fail
+        with self.assertRaises(OSError):
+            self.publish()
+        record = self.storage.root / "snapshots/v1/manifest.json"
+        document = read_json(record)
+        raw = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+        record.write_bytes(raw)
+        index = self.storage.root / "snapshots/index.json"
+        good = self.storage.entry(document, raw)
+        for entries in ([dict(good, sha256="0" * 64)], [dict(good, rollbackOf=True)], [good, good]):
+            index.write_bytes(json_bytes(entries))
+            with self.assertRaises(ServiceError) as raised:
+                FilesystemStorage(self.storage.root)
+            self.assertEqual(raised.exception.code, "invalid-base")
+        index.write_bytes(json_bytes([good]))
+        self.storage = FilesystemStorage(self.storage.root)
+        self.storage.complete_pending(digest(record), True)
+        self.assertEqual((self.storage.root / "manifest.json").read_bytes(), raw)
+        self.assertEqual(record.read_bytes(), raw)
 
 
 class ValidatorTests(StorageCase):

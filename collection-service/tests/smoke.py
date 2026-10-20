@@ -73,9 +73,11 @@ def main():
                         if result and not result["reject_reasons"]:
                             request("POST", "review/" + job["item"]["id"], {"approved": True, "job": job["id"]})
                 add_process_approve(SINGLE)
-                v1 = request("POST", "publish", {"parentVersion": 0, "confirm": True})
+                v1 = request("POST", "publish", {"parentVersion": 0, "confirm": True,
+                                                  "proposalRevision": request("GET", "review")["proposalRevision"]})
                 add_process_approve(PLAYLIST)
-                v2 = request("POST", "publish", {"parentVersion": 1, "confirm": True})
+                v2 = request("POST", "publish", {"parentVersion": 1, "confirm": True,
+                                                  "proposalRevision": request("GET", "review")["proposalRevision"]})
                 v3 = request("POST", "snapshots/1/rollback", {"parentVersion": 2, "confirm": True})
                 assert [v1["version"], v2["version"], v3["version"]] == [1, 2, 3]
                 assert [len(v["tracks"]) for v in (v1, v2, v3)] == [1, 2, 1]

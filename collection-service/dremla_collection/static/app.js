@@ -1,6 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const active = new Set(['queued', 'acquiring', 'processing']);
+const stale = code => code?.startsWith('stale-') || ['pending-publication', 'not-found', 'local-failure'].includes(code);
 let review, timer, draftId = '', jobsSignature = '', reviewSignature = '';
 function el(tag, text, cls) {
   const node = document.createElement(tag);
@@ -13,11 +14,14 @@ async function api(path, method = 'GET', body) {
   const response = await fetch('/api/' + path, {method, headers: method === 'GET' ? {} :
     {'Content-Type': 'application/json', 'X-Dremla-Request': '1'}, body: body === undefined ? undefined : JSON.stringify(body)});
   const value = await response.json();
-  if (!response.ok) throw new Error(value.message || 'Request failed.');
+  if (!response.ok) throw Object.assign(new Error(value.message || 'Request failed.'), {code: value.error});
   return value;
 }
 async function action(fn) {
-  try { error(''); await fn(); await refresh(); } catch (e) { error(e.message); }
+  try { error(''); await fn(); await refresh(); } catch (e) {
+    if (stale(e.code)) await refresh();
+    error(e.message);
+  }
 }
 function button(text, fn, secondary = true) {
   const node = el('button', text, secondary ? 'secondary' : '');
@@ -97,8 +101,26 @@ function drawReview(data) {
     $('selection').append(check(track.title, data.proposed.selection.includes(track.id), value => api('review/' + track.id, 'POST', {inSelection: value})));
   }
   $('diff').textContent = data.error ? data.error.message : diffText(data.diff);
+  const pending = data.pending, panel = $('pending');
+  panel.hidden = !pending; panel.replaceChildren();
+  if (pending) {
+    panel.append(el('h3', 'Interrupted publication'),
+      el('p', `Version ${pending.version} · ${pending.generated} · ${pending.counts.tracks} tracks · ${pending.counts.selection} selected` +
+        (pending.rollbackOf ? ` · rollback of ${pending.rollbackOf}` : '')),
+      el('p', 'SHA-256: ' + pending.sha256),
+      el('p', pending.rollbackOf ? 'Completing this rollback clears the review, as a rollback does.' : pending.matchesProposal ? 'Matches the current proposal.' : 'Differs from the current proposal. Later review changes are kept.'),
+      el('p', 'Make this saved version current before publishing newer changes.'));
+    const list = el('ol');
+    for (const track of pending.selection) list.append(el('li', `${track.title} · ${track.id}`));
+    panel.append(list, button(`Make version ${pending.version} current`, async () => {
+      if (confirm(`Make interrupted version ${pending.version} current?\n${pending.selection.map(t => t.title).join('\n')}\nSHA-256: ${pending.sha256}`)) {
+        await api('publish/pending/complete', 'POST', {sha256: pending.sha256, confirm: true});
+        await drafts(); await drawDraft();
+      }
+    }, false));
+  }
   $('publish').textContent = `Publish version ${data.current.version} → ${data.current.version + 1}`;
-  $('publish').disabled = !!data.error || !data.proposed || !data.proposed.selection.length;
+  $('publish').disabled = !!pending || !!data.error || !data.proposed || !data.proposed.selection.length;
 }
 async function refresh() {
   clearTimeout(timer);
@@ -126,9 +148,10 @@ $('add').onsubmit = event => { event.preventDefault(); action(async () => {
 }); };
 $('draft-picker').onchange = () => action(async () => { draftId = $('draft-picker').value; await drawDraft(); });
 $('publish').onclick = () => action(async () => {
-  const parent = review.current.version;
-  if (confirm(`Publish version ${parent} → ${parent + 1} to the local destination?\n${diffText(review.diff)}`)) {
-    await api('publish', 'POST', {parentVersion: parent, confirm: true}); await drafts(); await drawDraft();
+  const shown = review, parent = shown.current.version, proposalRevision = shown.proposalRevision;
+  const titles = new Map(shown.proposed.tracks.map(t => [t.id, t.title]));
+  if (confirm(`Publish version ${parent} → ${parent + 1} to the local destination?\n${diffText(shown.diff)}\nSelection:\n${shown.proposed.selection.map(id => titles.get(id)).join('\n')}`)) {
+    await api('publish', 'POST', {parentVersion: parent, proposalRevision, confirm: true}); await drafts(); await drawDraft();
   }
 });
 action(async () => { await drafts(); });

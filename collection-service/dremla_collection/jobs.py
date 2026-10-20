@@ -8,7 +8,7 @@ import uuid
 
 from .common import Cancelled, ServiceError, atomic_write, checkpoint, digest, json_bytes, read_json, require, require_utf8
 from .catalog import Catalog
-from .publish import FilesystemStorage
+from .publish import FilesystemStorage, revision
 from .urls import parse_url
 from .validate import local_path
 
@@ -326,16 +326,39 @@ class CollectionService:
             except ServiceError as exc:
                 proposal, diff = None, None
                 error = {"error": exc.code, "message": exc.message}
-            return dict(current=current, proposed=proposal, diff=diff, error=error,
+            except OSError:
+                proposal, diff = None, None
+                error = {"error": "local-failure", "message": "Local proposal assets could not be read."}
+            pending = self.storage.pending()
+            if pending:
+                document, raw, rollback_of = pending
+                titles = {t["id"]: t["title"] for t in document["tracks"]}
+                entry = self.storage.entry(document, raw, rollback_of)
+                pending = dict(entry, selection=[dict(id=t, title=titles[t]) for t in document["selection"]],
+                               matchesProposal=proposal is not None and revision(document) == revision(proposal))
+            return dict(current=current, proposed=proposal, diff=diff, error=error, pending=pending,
+                        proposalRevision=revision(proposal) if proposal is not None else None,
                         decisions=deepcopy(self.review_decisions),
                         results=[deepcopy(j) for j in self.jobs.values() if j["state"] == "ready"])
 
-    def publish(self, parent_version, confirm):
+    def publish(self, parent_version, confirm, proposal_revision):
         with self.lock:
+            self.storage.require_no_pending()
             _, proposal, assets, _ = self._proposal()
-            result = self.storage.publish(proposal, assets, parent_version, confirm)
+            result = self.storage.publish(proposal, assets, parent_version, confirm, proposal_revision)
             self.review_decisions.clear()
             self.save("review")
+            return result
+
+    def complete_pending(self, sha256, confirm):
+        with self.lock:
+            pending = self.storage.pending()
+            result = self.storage.complete_pending(sha256, confirm)
+            if pending is not None and pending[2] is not None:
+                # A completed rollback resets the review exactly as an uninterrupted rollback does.
+                self.review_decisions.clear()
+                self.save("review")
+            # Otherwise keep later review decisions: they apply on top of the recovered current.
             return result
 
     def rollback(self, version, parent_version, confirm):

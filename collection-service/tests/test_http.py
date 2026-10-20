@@ -6,7 +6,7 @@ import subprocess
 import threading
 from unittest.mock import patch
 
-from dremla_collection.common import read_json
+from dremla_collection.common import digest, read_json
 from dremla_collection.fixtures import SINGLE, PLAYLIST
 from dremla_collection.server import CollectionHTTPServer
 from support import ServiceCase
@@ -44,6 +44,10 @@ class HTTPTests(ServiceCase):
         self.assertEqual(status, 200, result)
         return result
 
+    def publish_body(self, parent, **changes):
+        return dict({"parentVersion": parent, "confirm": True,
+                     "proposalRevision": self.ok("GET", "/api/review")["proposalRevision"]}, **changes)
+
     def test_whole_flow_publish_two_versions_rollback_and_media(self):
         draft = self.ok("POST", "/api/drafts", {"url": SINGLE})
         self.assertEqual(self.ok("GET", "/api/drafts/" + draft["id"]), draft)
@@ -56,7 +60,7 @@ class HTTPTests(ServiceCase):
         self.assertEqual((status, part), (206, b"RIFF"))
         self.assertTrue(headers["Content-Range"].startswith("bytes 0-3/"))
         self.ok("POST", "/api/review/yt-fxAmbient01", {"approved": True, "job": first["id"]})
-        v1 = self.ok("POST", "/api/publish", {"parentVersion": 0, "confirm": True})
+        v1 = self.ok("POST", "/api/publish", self.publish_body(0))
         self.assertEqual(v1["version"], 1)
         self.assertEqual(v1["tracks"][0]["title"], "HTTP Lantern")
         self.assertEqual(self.ok("GET", "/media/published/" + v1["tracks"][0]["preview"]), preview)
@@ -70,9 +74,9 @@ class HTTPTests(ServiceCase):
         for job in review["results"]:
             if not job["result"]["reject_reasons"]:
                 self.ok("POST", "/api/review/" + job["item"]["id"], {"approved": True, "job": job["id"]})
-        v2 = self.ok("POST", "/api/publish", {"parentVersion": 1, "confirm": True})
+        v2 = self.ok("POST", "/api/publish", self.publish_body(1))
         self.assertEqual((v2["version"], len(v2["tracks"])), (2, 2))
-        stale, result, _ = self.request("POST", "/api/publish", {"parentVersion": 1, "confirm": True})
+        stale, result, _ = self.request("POST", "/api/publish", self.publish_body(1))
         self.assertEqual((stale, result["error"]), (409, "stale-parent"))
         v3 = self.ok("POST", "/api/snapshots/1/rollback", {"parentVersion": 2, "confirm": True})
         self.assertEqual((v3["version"], v3["tracks"]), (3, v1["tracks"]))
@@ -139,7 +143,7 @@ class HTTPTests(ServiceCase):
         status, result, _ = self.request("POST", "/api/review/yt-fxAmbient01", {"inSelection": True})
         self.assertEqual((status, result["error"]), (409, "unapproved"))
         self.ok("POST", "/api/review/yt-fxAmbient01", {"approved": True, "job": job["id"]})
-        status, result, _ = self.request("POST", "/api/publish", {"parentVersion": 0})
+        status, result, _ = self.request("POST", "/api/publish", self.publish_body(0, confirm=False))
         self.assertEqual((status, result["error"]), (400, "confirmation-required"))
 
     def test_worker_health_and_edit_lock_in_every_job_state(self):
@@ -178,6 +182,96 @@ class HTTPTests(ServiceCase):
             self.assertEqual((self.root / "state" / name).read_bytes(), data)
         job = self.ok("POST", f"/api/drafts/{draft['id']}/process", {})[0]
         self.assertEqual(self.wait_job(job["id"])["state"], "ready")
+
+    def test_two_tabs_bind_confirmation_to_proposal_and_allow_content_revert(self):
+        self.approved()
+        piano = self.ready("https://youtu.be/fxPiano0001")
+        path = "/api/review/" + piano["item"]["id"]
+        tab_a = self.ok("GET", "/api/review")
+        body_a = dict(parentVersion=0, confirm=True, proposalRevision=tab_a["proposalRevision"])
+        self.ok("POST", path, {"approved": True, "job": piano["id"]})
+        tab_b = self.ok("GET", "/api/review")
+        self.assertNotEqual(tab_a["proposalRevision"], tab_b["proposalRevision"])
+        status, result, _ = self.request("POST", "/api/publish", body_a)
+        self.assertEqual((status, result["error"]), (409, "stale-proposal"))
+        self.assertEqual(list(self.service.storage.root.iterdir()), [])
+        # Reverting B's edit restores the exact content identity A reviewed.
+        self.ok("POST", path, {"approved": False})
+        self.assertEqual(self.ok("GET", "/api/review")["proposalRevision"], tab_a["proposalRevision"])
+        first = self.ok("POST", "/api/publish", body_a)
+        self.assertEqual(first["tracks"], tab_a["proposed"]["tracks"])
+        tab_a = self.ok("GET", "/api/review")
+        self.ok("POST", path, {"approved": True, "job": piano["id"], "inSelection": True})
+        status, result, _ = self.request("POST", "/api/publish", dict(
+            parentVersion=1, confirm=True, proposalRevision=tab_a["proposalRevision"]))
+        self.assertEqual((status, result["error"]), (409, "stale-proposal"))
+        self.assertFalse((self.service.storage.root / "snapshots/v2").exists())
+        refreshed = self.ok("GET", "/api/review")
+        second = self.ok("POST", "/api/publish", dict(
+            parentVersion=1, confirm=True, proposalRevision=refreshed["proposalRevision"]))
+        self.assertEqual(second["tracks"], refreshed["proposed"]["tracks"])
+        self.assertEqual(second["selection"], refreshed["proposed"]["selection"])
+
+    def test_publish_requires_revision_and_refuses_unknown_fields(self):
+        self.approved()
+        valid = self.publish_body(0)
+        for body in ({"parentVersion": 0, "confirm": True}, dict(valid, proposalRevision=None),
+                     dict(valid, proposalRevision=""), dict(valid, extra=True)):
+            status, result, _ = self.request("POST", "/api/publish", body)
+            self.assertEqual((status, result["error"]), (400, "invalid-request"))
+        self.assertEqual(list(self.service.storage.root.iterdir()), [])
+
+    def test_pending_completion_http_guards_and_static_ui(self):
+        endpoint = "/api/publish/pending/complete"
+        for headers, expected in (
+                ({"Host": "foreign.example", "Content-Type": "application/json", "X-Dremla-Request": "1"}, (403, "invalid-host")),
+                ({"Content-Type": "application/json"}, (403, "csrf-refused")),
+                ({"Content-Type": "text/plain", "X-Dremla-Request": "1"}, (415, "invalid-content-type"))):
+            status, result, _ = self.request("POST", endpoint, {}, headers=headers)
+            self.assertEqual((status, result["error"]), expected)
+        status, result, _ = self.request("POST", endpoint, {"sha256": "0" * 64, "confirm": True})
+        self.assertEqual((status, result["error"]), (404, "not-found"))
+        job = self.approved()
+        def fail(stage):
+            if stage == "after-index":
+                raise OSError("private fixture failure")
+        self.service.storage.failure_hook = fail
+        status, result, _ = self.request("POST", "/api/publish", self.publish_body(0))
+        self.assertEqual((status, result["error"]), (500, "local-failure"))
+        self.service.storage.failure_hook = lambda stage: None
+        self.ok("POST", "/api/review/" + job["item"]["id"], {"inSelection": False})
+        pending = self.ok("GET", "/api/review")["pending"]
+        self.assertFalse(pending["matchesProposal"])
+        self.assertEqual(self.ok("GET", "/api/snapshots"), [])
+        record = self.service.storage.root / "snapshots/v1/manifest.json"
+        self.assertEqual(pending["sha256"], digest(record))
+        for path, body, expected in (
+                ("/api/publish", self.publish_body(0), (409, "pending-publication")),
+                ("/api/snapshots/1/rollback", {"parentVersion": 0, "confirm": True}, (409, "pending-publication")),
+                (endpoint, {"sha256": "0" * 64, "confirm": True}, (409, "stale-pending")),
+                (endpoint, {"sha256": pending["sha256"]}, (400, "confirmation-required")),
+                (endpoint, {"sha256": pending["sha256"], "confirm": 1}, (400, "confirmation-required")),
+                (endpoint, {"sha256": pending["sha256"], "confirm": True, "proposal": {}}, (400, "invalid-request"))):
+            status, result, _ = self.request("POST", path, body)
+            self.assertEqual((status, result["error"]), expected)
+        # A published asset disappearing after review must refuse completion, without committing.
+        asset = self.service.storage.root / read_json(record)["tracks"][0]["preview"]
+        saved = asset.read_bytes()
+        asset.unlink()
+        status, result, _ = self.request("POST", endpoint, {"sha256": pending["sha256"], "confirm": True})
+        self.assertEqual((status, result["error"]), (400, "invalid-base"))
+        self.assertNotIn(str(self.root), result["message"])
+        self.assertFalse((self.service.storage.root / "manifest.json").exists())
+        asset.write_bytes(saved)
+        self.ok("POST", endpoint, {"sha256": pending["sha256"], "confirm": True})
+        self.assertEqual((self.service.storage.root / "manifest.json").read_bytes(), record.read_bytes())
+        self.assertIsNone(self.ok("GET", "/api/review")["pending"])
+        self.assertEqual(self.ok("GET", "/api/review")["proposed"]["selection"], [])
+        self.assertIn(b'aria-label="Interrupted publication"', self.ok("GET", "/"))
+        script = self.ok("GET", "/app.js")
+        for marker in (b"proposalRevision = shown.proposalRevision", b"pending-publication", b"local-failure",
+                       b"stale-", b"publish/pending/complete", b"sha256: pending.sha256", b"!!pending"):
+            self.assertIn(marker, script)
 
 
 class StartupTests(ServiceCase):
