@@ -100,6 +100,23 @@ DREMLA_OUTCOME_SCOPE=repo nice -n 15 scripts/verify-outcome.sh
 
 ## Other workflows
 
+`.forgejo/workflows/collection-image.yml` runs only on relevant `main` pushes and manual dispatch
+on `main`, never on pull requests. Its `heavy` job has a 60-minute timeout, timeouts on every
+step and the `collection-image` concurrency group. It builds once with the full commit SHA,
+passes that image ID to the Docker packaging gate, then verifies the ID before publication
+using the existing registry credentials from the services workspace's `/forgejo` path.
+Host clients run under `nice -n 19`; test containers separately use `--cpu-shares 2 --cpus 2`.
+Niceness does not propagate to containers or the daemon's release builder. The gate has a
+25-minute TERM deadline, 60 seconds before forced termination, and a 30-minute step timeout;
+an `always()` step sweeps only that job's labelled test containers and volumes.
+An existing SHA tag prints `ALREADY_PUBLISHED` and its original digest without pushing either
+tag; otherwise the tested SHA tag is pushed before `latest`. `DIGEST=sha256:...` appears in the
+publishing log and job summary. Login uses an isolated Docker config under `RUNNER_TEMP`,
+so job teardown also removes it after a hard cancellation; the normal trap logs out and removes
+it. The bearer header is supplied to curl on stdin. Local release images are removed afterwards.
+Runner failure/cancellation can prevent the `always()` resource cleanup. The main merge gate remains Docker-free. See
+[Container image](collection-service.md#container-image) for the runtime contract and local gate.
+
 - `.forgejo/workflows/signing-smoke.yml`: the release signing smoke test, manual only (`workflow_dispatch`, and only on `main`). It never runs on pull requests or pushes. Every step has a timeout, and the step timeouts add up to less than the 15 minute job timeout, so the cleanup step that removes the signing directory runs unless the run is cancelled or the runner dies (see the limits in release signing). See [release signing](release-signing.md).
 
 ## Release lock gates

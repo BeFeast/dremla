@@ -17,7 +17,8 @@ import threading
 import time
 
 sys.dont_write_bytecode = True
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = (Path(os.environ["DREMLA_SMOKE_APP_ROOT"]) if "DREMLA_SMOKE_APP_ROOT" in os.environ
+        else Path(__file__).resolve().parents[2])
 sys.path.insert(0, str(ROOT / "collection-service"))
 from dremla_collection.fixtures import SINGLE, PLAYLIST
 from dremla_collection.ffmpeg import analyze, duration
@@ -25,12 +26,14 @@ from dremla_collection.validate import validate
 
 
 def main():
-    with tempfile.TemporaryDirectory(prefix="dremla-collection-smoke-") as directory:
+    # Container checks keep persistent files on a data mount, media scratch in /tmp.
+    with tempfile.TemporaryDirectory(prefix="dremla-collection-smoke-",
+                                     dir=os.environ.get("DREMLA_SMOKE_ROOT")) as directory:
         work = Path(directory)
         env = dict(os.environ, DREMLA_COLLECTION_DATA=str(work / "state"), DREMLA_COLLECTION_DEST=str(work / "published"),
                    DREMLA_COLLECTION_PORT="0", DREMLA_COLLECTION_ACQUISITION="fixture")
         with (work / "server-errors").open("w+") as errors:
-            process = subprocess.Popen([str(ROOT / "scripts/collection-service.sh")], env=env,
+            process = subprocess.Popen([sys.executable, "-I", str(ROOT / "collection-service/run.py")], env=env,
                                        stdout=subprocess.PIPE, stderr=errors, text=True)
             try:
                 with selectors.DefaultSelector() as selector:

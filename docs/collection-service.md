@@ -302,6 +302,65 @@ It checks that the shipped Opus measures −24 ± 1 LUFS and that a high-LRA inp
 test prints an explicit `SKIPPED (no ffmpeg)` line otherwise. `verify-outcome.sh` runs the stage in
 both scopes.
 
+## Container image
+
+The image packages the unchanged service, its static UI, Python 3 and ffmpeg from Debian 13
+(`trixie-slim`, pinned by digest). Its build context is `collection-service/`; tests, Android
+sources and audio are excluded. Build with a full 40-hex commit SHA:
+
+```bash
+nice -n 19 docker build --build-arg "DREMLA_REVISION=$(git rev-parse HEAD)" \
+  -t dremla-collection:local collection-service
+```
+
+Missing or malformed revisions fail the build. `/app/REVISION` and the OCI
+`org.opencontainers.image.revision` label contain that SHA; the source and title labels identify
+the repository and `dremla-collection`. The base digest pins the filesystem; Debian packages
+are resolved at build time, so use the published image digest for an exact runtime artifact.
+
+Run with `--init --read-only --tmpfs /tmp --user 1000:1000`. Docker's init (tini) forwards SIGTERM
+and reaps orphaned children. The packaging gate also verifies the Python PID-1 path without
+`--init`; use init operationally as a child-reaping safeguard. The real service entrypoint is
+`python3 -I /app/collection-service/run.py`, and `STOPSIGNAL` is SIGTERM. Allow at least 20 seconds
+to stop before forcing termination. Interrupted jobs remain available for retry after restart.
+
+Mount two separate writable directories or volumes, owned by UID/GID `1000:1000`, at `/data/state`
+and `/data/published`. These are the defaults of `DREMLA_COLLECTION_DATA` and
+`DREMLA_COLLECTION_DEST`. Defaults also set `DREMLA_COLLECTION_ACQUISITION=fixture`,
+`DREMLA_COLLECTION_PROCESSOR=ffmpeg`, `DREMLA_COLLECTION_PORT=8765`, `TMPDIR=/tmp` and
+`PYTHONDONTWRITEBYTECODE=1`. Media scratch goes to the tmpfs; state and output go to the mounts.
+The service still binds only to loopback **inside its container**. Publishing a Docker port does
+not make that listener reachable; network access and deployment are separate work. Tests use
+`--network none` and execute their HTTP probes inside the container.
+
+`.forgejo/workflows/collection-image.yml` gates publication with
+`nice -n 19 scripts/test-collection-image.sh` on the Docker build runner. CI builds the release
+image once, records its image ID, and supplies that ID via `DREMLA_IMAGE_UNDER_TEST` to the
+no-argument gate. The gate retains caller-owned images; without that variable it builds and
+removes a unique local image and also checks missing/malformed revision rejection.
+It checks provenance and runtime contents, runs the existing ffmpeg
+smoke (versions 1 → 2 → 3 rollback and −24 ± 1 LUFS), and checks HTTP health, active-processing
+shutdown, interruption recovery and retry both with and without init. It prints exit codes and
+stop timings, verifies no application root writes (allowing Docker's injected init mountpoint),
+and removes its containers and volumes. Self-build mode also removes its image and isolated
+build cache. It needs Docker with Buildx, Python 3, git and `setsid`. TERM is forwarded to the
+host driver and its clients before cleanup. CI bounds the gate at 25 minutes (TERM, then KILL
+after 60 seconds), inside a 30-minute step, and an `always()` step removes leftover containers
+and volumes bearing that job's unique test label. Runner failure can still prevent cleanup.
+`nice -n 19` lowers only host script/client priority, not container workloads: test containers
+use `--cpu-shares 2 --cpus 2`, and the self-build builder uses `cpu-shares=2`.
+The daemon's release builder does not inherit the Docker client's niceness.
+
+CI publishes only from `main`, on relevant pushes or manual dispatch, using the existing
+registry credential. Tags are `git.oklabs.uk/befeast/dremla-collection:<sha12>` and `:latest`
+(pushed last from the tested image ID). CI checks the image ID again immediately before each
+push. SHA tags are write-once: an authenticated check for an existing SHA prints
+`ALREADY_PUBLISHED` and its existing `DIGEST=sha256:...`, skips both pushes (including `latest`),
+and succeeds. Lookup errors other than a missing manifest fail publication. The digest printed
+for a published SHA never changes; rebuilding dependencies for publication requires a new
+commit. The full `DIGEST=sha256:...` is printed in the publishing step log and job summary.
+No registry login, publishing or deployment is performed by the local test script.
+
 ## Out of scope
 
 Each of these needs its own decision or issue:

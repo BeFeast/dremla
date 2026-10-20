@@ -1,0 +1,155 @@
+name: collection-image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - collection-service/**
+      - scripts/test-collection-image.sh
+      - .forgejo/workflows/collection-image.yml
+  workflow_dispatch:
+
+concurrency:
+  group: collection-image
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  REGISTRY: git.oklabs.uk
+  IMAGE: git.oklabs.uk/befeast/dremla-collection
+  INFISICAL_SERVICES: 5b5038c7-46d5-496f-bfa6-6184cb41e143
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: heavy
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        timeout-minutes: 3
+
+      - name: Build release image
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          scratch="$(mktemp -d "${RUNNER_TEMP:?}/dremla-image-test.XXXXXX")"
+          prefix="dremla-image-test-$(basename "$scratch" | tr '[:upper:]' '[:lower:]')"
+          echo "DREMLA_IMAGE_TEST_PREFIX=$prefix" >> "$GITHUB_ENV"
+          nice -n 19 docker build --build-arg "DREMLA_REVISION=$GITHUB_SHA" \
+            -t "$IMAGE:${GITHUB_SHA:0:12}" collection-service
+          image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE:${GITHUB_SHA:0:12}")"
+          echo "DREMLA_TESTED_IMAGE_ID=$image_id" >> "$GITHUB_ENV"
+
+      - name: Container gate (host only)
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect --format '{{.Id}}' "$IMAGE:${GITHUB_SHA:0:12}")" = "$DREMLA_TESTED_IMAGE_ID"
+          export DREMLA_IMAGE_UNDER_TEST="$DREMLA_TESTED_IMAGE_ID"
+          # Leave five minutes for TERM cleanup before the runner's hard step deadline.
+          nice -n 19 timeout -s TERM --kill-after=60s 25m scripts/test-collection-image.sh
+
+      - name: Remove leftover gate containers and volumes
+        if: always()
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          [[ -n "${DREMLA_IMAGE_TEST_PREFIX:-}" ]] || exit 0
+          [[ "$DREMLA_IMAGE_TEST_PREFIX" =~ ^dremla-image-test-[a-z0-9.-]+$ ]]
+          label="dremla.image-test=$DREMLA_IMAGE_TEST_PREFIX"
+          containers="$(docker ps -aq --filter "label=$label")"
+          volumes="$(docker volume ls -q --filter "label=$label")"
+          failed=0
+          while read -r id; do
+            [[ -z "$id" ]] || docker rm -f "$id" >/dev/null || failed=1
+          done <<< "$containers"
+          while read -r name; do
+            [[ -z "$name" ]] || docker volume rm "$name" >/dev/null || failed=1
+          done <<< "$volumes"
+          exit "$failed"
+
+      - name: Read existing registry credentials and publish
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          # Same universal-auth identity and existing registry keys as opendaw/deploy.yml.
+          # Keep credentials in this step and an isolated Docker config, never the build.
+          export DOCKER_CONFIG
+          DOCKER_CONFIG="$(mktemp -d "${RUNNER_TEMP:?}/docker-config.XXXXXX")"
+          cleanup() {
+            local rc=$?
+            trap - EXIT
+            docker logout "$REGISTRY" >/dev/null 2>&1 || rc=1
+            rm -rf "$DOCKER_CONFIG" || rc=1
+            exit "$rc"
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          set -a
+          . "$HOME/.config/infisical/machine.env"
+          set +a
+          token=$(infisical login --method=universal-auth \
+            --client-id="$INFISICAL_CLIENT_ID" --client-secret="$INFISICAL_CLIENT_SECRET" \
+            --plain --silent | tr -d '\r\n')
+          printf '%s' "$token" | grep -qE '^[A-Za-z0-9._-]+$'
+          echo "::add-mask::$token"
+          get() {
+            printf 'Authorization: Bearer %s\n' "$token" | curl -fsS -H @- \
+              "$INFISICAL_API_URL/v3/secrets/raw/$1?workspaceId=$INFISICAL_SERVICES&environment=prod&secretPath=/forgejo" \
+              | jq -er '.secret.secretValue'
+          }
+          bot_user="$(get OKLABS_BOT_USERNAME)"
+          echo "::add-mask::$bot_user"
+          bot_pat="$(get OKLABS_BOT_PAT)"
+          echo "::add-mask::$bot_pat"
+          printf '%s' "$bot_pat" | docker login "$REGISTRY" -u "$bot_user" --password-stdin
+          unset token bot_pat bot_user INFISICAL_CLIENT_SECRET INFISICAL_CLIENT_ID
+          publish_image() {
+            local ref="$IMAGE:${GITHUB_SHA:0:12}" error
+            # Fail closed on authentication/transport errors; only a missing manifest allows a push.
+            if digest="$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}' 2>"$DOCKER_CONFIG/inspect-error")"; then
+              [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+              echo ALREADY_PUBLISHED
+              return 0
+            fi
+            error="$(cat "$DOCKER_CONFIG/inspect-error")"
+            if [[ "$error" != *"$ref: not found"* && "$error" != *"manifest unknown"* ]]; then
+              printf '%s\n' "$error" >&2
+              return 1
+            fi
+            test "$(docker image inspect --format '{{.Id}}' "$ref")" = "$DREMLA_TESTED_IMAGE_ID" || return 1
+            docker tag "$DREMLA_TESTED_IMAGE_ID" "$IMAGE:latest" || return 1
+            # Assert the tested identity immediately before each push.
+            test "$(docker image inspect --format '{{.Id}}' "$ref")" = "$DREMLA_TESTED_IMAGE_ID" || return 1
+            nice -n 19 docker push "$ref" || return 1
+            test "$(docker image inspect --format '{{.Id}}' "$IMAGE:latest")" = "$DREMLA_TESTED_IMAGE_ID" || return 1
+            nice -n 19 docker push "$IMAGE:latest" || return 1
+            digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$ref")" || return 1
+            digest="${digest##*@}"
+          }
+          publish_image
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "DIGEST=$digest"
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            printf 'Image: `%s:%s`\n\nDIGEST=%s\n' "$IMAGE" "${GITHUB_SHA:0:12}" "$digest" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Remove local release images
+        if: always()
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          failed=0
+          for tag in "${GITHUB_SHA:0:12}" latest; do
+            if docker image inspect "$IMAGE:$tag" >/dev/null 2>&1; then
+              docker image rm "$IMAGE:$tag" >/dev/null || failed=1
+            fi
+          done
+          exit "$failed"
