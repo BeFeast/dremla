@@ -37,22 +37,29 @@ fun NightScene(
     onLike: () -> Unit = {},
     onNever: () -> Unit = {},
     onOpenMenu: () -> Unit = {},
+    onSource: (() -> Unit)? = null,
 ) {
     val type = rememberBrandType()
     Box(Modifier.fillMaxSize().background(BrandColors.Ground)) {
-        if (session.phase == Phase.Finished || session.closeActivity || session.blackScreen) return@Box
+        if (session.phase == Phase.Finished || session.closeActivity || (session.blackScreen && (!session.online || !menuOpen))) return@Box
         if (menuOpen) {
-            NightMenu(session, status, type, onTimer, onTvOff, onRefresh, onLike, onNever)
+            NightMenu(session, status, type, onTimer, onTvOff, onRefresh, onLike, onNever, onSource)
             Hints(listOf("↑ ↓ ← →" to "move", "OK" to "choose", "BACK" to "close"), type)
             return@Box
         }
-        if (status?.phase in listOf(CollectionPhase.Loading, CollectionPhase.Downloading, CollectionPhase.FirstRunError)) {
+        if (session.online && session.onlinePhase == "unavailable") {
+            Column(Modifier.align(Alignment.Center)) {
+                Label("Online playback unavailable", type.Headline)
+                Label(if (session.playableCount == 0) "A valid catalog is needed. Open the menu to change source." else "Try a new launcher start. The sleep timer is still running.", type.Caption)
+            }
+            Hints(listOf("hold OK" to "menu"), type)
+        } else if (status?.phase in listOf(CollectionPhase.Loading, CollectionPhase.Downloading, CollectionPhase.FirstRunError)) {
             DownloadScene(session.collectionLoaded, status!!, type, onRefresh, onOpenMenu)
             Hints(listOf("hold OK" to "menu"), type)
         } else if (session.track != null) {
             Column(Modifier.fillMaxSize().padding(start = BrandSpacing.ScreenX, end = BrandSpacing.ScreenX,
                 bottom = BrandSpacing.ContentBottomReserve), verticalArrangement = Arrangement.Center) {
-                Eyebrow(if (session.phase == Phase.Paused) "PAUSED" else session.track.category.uppercase(), type)
+                Eyebrow(if (session.phase == Phase.Paused) "PAUSED" else if (session.onlinePhase in listOf("starting", "resuming")) "CONNECTING" else session.track.category.uppercase(), type)
                 Spacer(Modifier.height(16.dp))
                 BasicText(session.track.title, style = type.Title, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.widthIn(max = BrandSpacing.TitleMeasure))
@@ -160,7 +167,7 @@ fun NightScene(
 }
 
 @Composable private fun BoxScope.NightMenu(s: SessionState, status: CollectionStatus?, type: BrandType,
-    timer: (Int) -> Unit, tv: () -> Unit, refresh: () -> Unit, like: () -> Unit, never: () -> Unit) {
+    timer: (Int) -> Unit, tv: () -> Unit, refresh: () -> Unit, like: () -> Unit, never: () -> Unit, source: (() -> Unit)?) {
     Column(Modifier.align(Alignment.TopCenter).padding(top = 24.dp).width(BrandSpacing.PanelWidth)
         .background(BrandColors.Panel).border(0.5.dp, BrandColors.Line).padding(horizontal = 30.dp, vertical = 20.dp)) {
         Eyebrow("SLEEP TIMER", type)
@@ -187,15 +194,16 @@ fun NightScene(
             SleepRouteStatus.DeviceAdmin -> "device admin"
             SleepRouteStatus.Accessibility -> "accessibility"
         }
-        val rows = listOf(
+        val rows = (if (source != null) listOf(Triple("source", "Music source", if (s.online) "Online · select for downloaded" else "Downloaded · select for online")) else emptyList()) + listOf(
             Triple("tv", "TV off", if (s.tvOff) "on · ${route()}" else "off · ${route()}"),
-            Triple("refresh", "Refresh collection", "${s.playableCount} tracks"),
+            Triple("refresh", if (s.online) "Online catalog" else "Refresh collection", if (s.online && s.onlinePhase == "unavailable") "unavailable · needs catalog or new launch" else "${s.playableCount} tracks"),
             Triple("like", if (s.track?.liked == true) "Unlike" else "Like", "current track"),
             Triple("never", "Never again", "skip and exclude"),
         )
         rows.forEach { (tag, title, meta) ->
             NightControl(tag, Modifier.fillMaxWidth().height(BrandSpacing.RowHeight), action = {
                 when (tag) {
+                    "source" -> source?.invoke()
                     "tv" -> tv()
                     "refresh" -> refresh()
                     "like" -> like()

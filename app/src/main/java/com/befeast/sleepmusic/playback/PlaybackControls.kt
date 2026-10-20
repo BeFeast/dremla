@@ -14,6 +14,8 @@ interface PlaybackControls {
     /** Cancels only a launcher request waiting for the first collection. */
     fun cancelPendingStart() {}
     val state: StateFlow<SessionState>
+    fun setOnline(enabled: Boolean) {}
+    fun onServiceDestroyed() {}
 
     /** The only way a session starts: a launcher start while no session is active. */
     fun onUiEntry(verdict: LaunchVerdict)

@@ -27,7 +27,8 @@ After an approved Forgejo release is installed on the bedroom SEI600GO Android T
 10. **Offline.** After the first download the app starts and plays without network or when the collection host is unreachable.
 11. **Collection download.** The first run downloads the selection; each file is verified against the manifest SHA-256; an interrupted download continues file by file through `.part` files with whole-file retry (the host serves no `Range` or `Content-Length`); refresh adds new tracks and keeps likes and blocks; HTTPS only, redirects to HTTP are refused.
 12. **Failure states.** No network on first run shows a clear screen with retry; a host outage on refresh keeps the old collection playing; system sleep, inattentive timeout and screensaver do not interrupt a session; a process killed at night does not restart music.
-13. **Privacy.** No account, telemetry, analytics or crash-reporting service. The only network traffic goes to the collection host. Preferences never leave the device.
+13. **Privacy.** No account, telemetry, analytics or crash-reporting service. Downloaded mode only contacts the collection host. The explicitly opted-in online source (#54,
+    `docs/collection-client-contract.md`) also resolves and streams directly on the client; NoSession only. Preferences never leave the device.
 14. **Night log.** A local rolling log (last 14 nights: session start and end, tracks played, errors) in app-private storage, readable over adb through `dumpsys` on the playback service, because release builds are not debuggable.
 15. **Stability.** A full two-hour session produces no crash or ANR; after a reboot the app, preferences and collection are intact.
 16. **Look.** The night UI follows `docs/design-contract.md`.
@@ -77,4 +78,4 @@ Toolchain pins are in `AGENTS.md`. After the scaffold issue:
 
 ## Non-Goals
 
-Sleep-stage or melatonin claims; speech, singing or abrupt dynamics in the music; a nature or noise mixer; alarms, tracking or meditation; YouTube integration.
+Sleep-stage or melatonin claims; speech, singing or abrupt dynamics in the music; a nature or noise mixer; alarms, tracking or meditation. Opt-in online references are an additive #54 slice; account sign-in remains deferred.

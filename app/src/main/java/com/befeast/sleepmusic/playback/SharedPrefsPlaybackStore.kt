@@ -10,7 +10,10 @@ import androidx.core.content.edit
  * block still has it; shuffle progress uses apply, where a lost write allows at most one repeat.
  * Backup and device transfer exclude the whole app (res/xml), so nothing here leaves the device.
  */
-class SharedPrefsPlaybackStore(context: Context) : PlaybackStore {
+class SharedPrefsPlaybackStore(context: Context) : PlaybackStore, com.befeast.sleepmusic.online.OnlinePreference {
+    override var enabled: Boolean
+        get() = prefs.getBoolean("online_source", false)
+        set(value) { prefs.edit(commit = true) { putBoolean("online_source", value) } }
     private val prefs: SharedPreferences = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
     override fun liked(): Set<String> = prefs.getStringSet(KEY_LIKED, null)?.toSet().orEmpty()
@@ -44,6 +47,13 @@ class SharedPrefsPlaybackStore(context: Context) : PlaybackStore {
             putStringSet(KEY_BAG_PLAYED, state.played.toSet())
             putString(KEY_BAG_LAST, state.lastId)
         }
+    }
+
+    override fun onlineBag() = BagState(
+        prefs.getStringSet("online_bag_played", null)?.toSet().orEmpty(), prefs.getString("online_bag_last", null))
+
+    override fun saveOnlineBag(state: BagState) {
+        prefs.edit { putStringSet("online_bag_played", state.played); putString("online_bag_last", state.lastId) }
     }
 
     override var tvOff: Boolean

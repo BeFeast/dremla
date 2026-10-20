@@ -23,6 +23,10 @@ data class PlayableCollection(val tracks: List<Track>, val selection: List<Strin
  * earlier waits for it, including through first-run failure and explicit retry.
  */
 interface CollectionSource {
+    val online: Boolean get() = false
+    fun onlineTrack(id: String): com.befeast.sleepmusic.online.CatalogTrack? = null
+    fun setOnline(enabled: Boolean) {}
+    fun onLaunch() {}
     val collection: StateFlow<PlayableCollection?>
     fun fileFor(track: Track): File
 }

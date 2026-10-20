@@ -1,5 +1,7 @@
 package com.befeast.sleepmusic.playback
 
+import kotlinx.coroutines.*
+
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -25,6 +27,9 @@ import com.befeast.sleepmusic.R
  */
 class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
+    private val nightScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var nightObserver: Job? = null
+    private var onlineWake: android.os.PowerManager.WakeLock? = null
 
     internal var mediaButtonGuardLookup: (MediaSession) -> Pair<PlatformSession, PlatformSession.Callback> =
         PlatformMediaButtonGuard::lookup
@@ -79,9 +84,19 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         handler.removeCallbacks(diagnosticTimeout)
+        nightScope.cancel()
+        onlineWake?.let { if (it.isHeld) it.release() }; onlineWake = null
+        if (mediaSession != null) graph.controls.onServiceDestroyed()
         mediaSession?.release()
         mediaSession = null
         super.onDestroy()
+    }
+
+    override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
+        if (graph.controls.state.value.let { it.online && it.isActive }) {
+            // Media3 normally demotes silent players. This night must survive resolver outages.
+            startForeground(IDLE_NOTIFICATION_ID, idleNotification())
+        } else super.onUpdateNotification(session, startInForegroundRequired)
     }
 
     /** True while a session is active, with the MediaSession built and added; false otherwise. */
@@ -99,7 +114,24 @@ class PlaybackService : MediaSessionService() {
             PlatformMediaButtonGuard.install(session, graph.controls, mediaButtonGuardLookup)
             addSession(session)
         }
+        updateNightWake(graph.controls.state.value)
+        if (nightObserver == null) {
+            nightObserver = nightScope.launch {
+                graph.controls.state.collect { updateNightWake(it) }
+            }
+        }
+        if (graph.controls.state.value.online) startForeground(IDLE_NOTIFICATION_ID, idleNotification())
         return true
+    }
+
+    private fun updateNightWake(state: SessionState) {
+        if (state.online && state.isActive) {
+            if (onlineWake == null) onlineWake = getSystemService(android.os.PowerManager::class.java)
+                .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "Dremla:OnlineNight")
+            if (onlineWake?.isHeld == false) onlineWake?.acquire()
+        } else {
+            onlineWake?.let { if (it.isHeld) it.release() }
+        }
     }
 
     /**

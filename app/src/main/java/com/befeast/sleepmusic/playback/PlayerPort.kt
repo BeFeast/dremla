@@ -2,7 +2,12 @@ package com.befeast.sleepmusic.playback
 
 import java.io.File
 
-data class QueueItem(val trackId: String, val file: File, val title: String, val artist: String)
+data class QueueItem(val trackId: String, private val localFile: File?, val title: String, val artist: String,
+    val stream: com.befeast.sleepmusic.online.Resolved? = null, val startPositionMs: Long = 0) {
+    init { require((localFile != null) != (stream != null)) }
+    /** Offline compatibility accessor; stream inputs deliberately have no file. */
+    val file: File get() = checkNotNull(localFile)
+}
 
 /**
  * The narrow player the engine drives: a playlist of at most two items, the current track and the

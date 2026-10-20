@@ -15,6 +15,9 @@ interface PlaybackStore {
     fun bag(): BagState
     fun saveBag(state: BagState)
 
+    fun onlineBag(): BagState = BagState()
+    fun saveOnlineBag(state: BagState) {}
+
     /** End-of-night sleep preference; default on. */
     var tvOff: Boolean
 

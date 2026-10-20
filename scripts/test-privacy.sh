@@ -21,6 +21,18 @@ for endpoint in 'https://example.org/data' 'http://html.me.uk/file' 'https://htm
   check 1
 done
 rm "$work/app/src/main/Test.kt"
+resolver="$work/app/src/main/java/com/befeast/sleepmusic/online/NewPipeResolver.kt"
+mkdir -p "$(dirname "$resolver")"
+printf '%s\n' 'val url = "https://www.youtube.com/watch?v=$videoId"' > "$resolver"
+check 0
+for endpoint in 'https://www.youtube.com/playlist?list=$videoId' 'http://www.youtube.com/watch?v=$videoId' 'https://www.youtube.com.evil/watch?v=$videoId' 'https://www.youtube.com/watch?v=$videoId&extra=1'; do
+  printf 'val url = "%s"\n' "$endpoint" > "$resolver"
+  check 1
+done
+printf '%s\n' 'val url = "https://www.youtube.com/watch?v=$videoId"' > "$work/app/src/main/Test.kt"
+rm "$resolver"
+check 1
+rm "$work/app/src/main/Test.kt"
 for variant in debug release demo; do
   mkdir -p "$work/app/src/$variant/java"
   printf '%s\n' 'val url = "https://example.org/data"' > "$work/app/src/$variant/java/Test.kt"
@@ -63,4 +75,4 @@ for dependency in 'files("libs/fixture.jar")' 'files("libs/fixture.aar")' 'fileT
     exit 1
   fi
 done
-echo 'test-privacy: PASS (16 cases)'
+echo 'test-privacy: PASS (22 cases)'

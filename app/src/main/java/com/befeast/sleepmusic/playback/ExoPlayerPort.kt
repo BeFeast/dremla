@@ -18,48 +18,62 @@ import androidx.media3.common.Player
  * last [setVolume] value and applies it to a player it creates later: the engine silences the
  * port before the first load of a process, and a new player would otherwise start at volume 1.
  */
-class ExoPlayerPort(private val playerFactory: () -> Player) : PlayerPort {
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+class ExoPlayerPort(private val headers: StreamHeaders = StreamHeaders(), private val playerFactory: () -> Player) : PlayerPort {
     private var player: Player? = null
     private var listener: PlayerPort.Listener? = null
     private var volume = 1f
 
-    private val playerListener = object : Player.Listener {
-        override fun onIsPlayingChanged(isPlaying: Boolean) {
-            if (isPlaying) listener?.onPlaying()
-        }
-
-        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO &&
-                reason != Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
-            ) {
-                return
+    private var streaming = false
+    private var callbackGeneration = 0L
+    private var playerListener: Player.Listener? = null
+    private fun callbacks(target: PlayerPort.Listener?): Player.Listener {
+        val generation = ++callbackGeneration
+        return object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (generation != callbackGeneration) return
+                if (isPlaying) target?.onPlaying()
             }
-            val p = player ?: return
-            val index = p.currentMediaItemIndex
-            if (index <= 0) return
-            p.removeMediaItems(0, index)
-            listener?.onAdvanced()
-        }
 
-        override fun onPlaybackStateChanged(playbackState: Int) {
-            val p = player ?: return
-            if (playbackState == Player.STATE_ENDED && p.mediaItemCount > 0) listener?.onEnded()
-        }
-
-        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-            if (!playWhenReady && reason != Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) {
-                listener?.onPausedBySystem()
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                if (generation != callbackGeneration) return
+                if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO &&
+                    reason != Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
+                ) {
+                    return
+                }
+                val p = player ?: return
+                val index = p.currentMediaItemIndex
+                if (index <= 0) return
+                p.removeMediaItems(0, index)
+                target?.onAdvanced()
             }
-        }
 
-        override fun onPlayerError(error: PlaybackException) {
-            listener?.onError(error.errorCodeName)
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (generation != callbackGeneration) return
+                val p = player ?: return
+                if (playbackState == Player.STATE_ENDED && p.mediaItemCount > 0) target?.onEnded()
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                if (generation != callbackGeneration) return
+                if (!playWhenReady && reason != Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) {
+                    target?.onPausedBySystem()
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                if (generation != callbackGeneration) return
+                target?.onError(if (streaming) StreamErrors.reason(error) else error.errorCodeName)
+            }
         }
     }
 
     private fun player(): Player = player ?: playerFactory().also {
         it.volume = volume
-        it.addListener(playerListener)
+        val callbacks = callbacks(listener)
+        playerListener = callbacks
+        it.addListener(callbacks)
         player = it
     }
 
@@ -70,7 +84,11 @@ class ExoPlayerPort(private val playerFactory: () -> Player) : PlayerPort {
 
     override fun load(current: QueueItem, upNext: QueueItem?, play: Boolean) {
         val p = player()
-        p.setMediaItems(listOfNotNull(current, upNext).map(::mediaItem), 0, 0L)
+        playerListener?.let(p::removeListener)
+        playerListener = callbacks(listener).also(p::addListener)
+        streaming = current.stream != null
+        headers.replace(listOfNotNull(current, upNext))
+        p.setMediaItems(listOfNotNull(current, upNext).map(::mediaItem), 0, current.startPositionMs)
         p.prepare()
         if (play) p.play() else p.pause()
     }
@@ -97,6 +115,10 @@ class ExoPlayerPort(private val playerFactory: () -> Player) : PlayerPort {
     }
 
     override fun stopAndClear() {
+        callbackGeneration++
+        headers.replace(emptyList())
+        playerListener?.let { player?.removeListener(it) }
+        playerListener = null
         val p = player ?: return
         p.stop()
         p.clearMediaItems()
@@ -113,7 +135,8 @@ class ExoPlayerPort(private val playerFactory: () -> Player) : PlayerPort {
 
     private fun mediaItem(item: QueueItem): MediaItem = MediaItem.Builder()
         .setMediaId(item.trackId)
-        .setUri(Uri.fromFile(item.file))
+        .setUri(item.stream?.let { Uri.parse(headers.mediaUri(item.trackId)) } ?: Uri.fromFile(checkNotNull(item.file)))
+        .setMimeType(item.stream?.mimeType)
         .setMediaMetadata(
             MediaMetadata.Builder()
                 .setTitle(item.title)

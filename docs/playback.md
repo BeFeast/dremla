@@ -443,3 +443,27 @@ Collection download and refresh, the night log and `dumpsys` output (#4); black 
 `ProductionAdaptersTest` runs on SDK 34: `SystemAudioControl` only reads the real shadowed music stream (index 1, 0 and muted cases); its recording shadow proves no `setStreamVolume` or `adjustStreamVolume` call reaches any stream and every stream keeps its index and mute state. `ServicePlaybackHost` starts, resumes and stops the correct service component. `AppPlaybackGraph` retains its production wiring while accepting an internal test scope, clock, collection and player factory; its guarding player drives engine skip, and a live service's task removal ends that engine with `Stopped`. Production defaults remain the main dispatcher, elapsed-realtime clock, local collection and ExoPlayer.
 
 New methods in `SessionStartTest` cover launcher resume without a new session, track or timer, the host-before-play order, rejection of empty/unmatched/blocked selection fallback, and `NothingToPlay` after blocking the last selected track. These map respectively to PRD 1/8, 3 and 3/9. The platform guard tests map to PRD 3/7/8/15, adapter tests to 2/3/7/8/15, exact manifest permissions to 13, and coroutine failure detection to 15.
+
+## Online playback (#54)
+
+The menu's Music source choice persists opt-in; Downloaded remains default. Changing source
+stops playback, leaves offline files and preferences intact, and requires a new launcher start.
+`QueueItem` accepts a local file or a transient resolved stream plus request headers and resume
+position. Media3 data-source requests receive those headers only in memory. Online resolution
+runs on IO, guarded by session and attempt tokens; skip, stop, expiry, source changes and service
+destruction invalidate pending work and stale player callbacks.
+
+`OnlineNight` is driven by real engine callbacks, with first audio confirming resolve/resume
+success. Start retry and position-preserving resume share three attempts per night. The streak
+counts distinct failed track IDs since the last track end; repeated failures of an ID count once.
+Covering the current eligible selection becomes silent unavailable while the same timer continues;
+only track end clears the streak. Media HTTP 403/410 maps to network for bounded re-resolution.
+No network recovery observer starts playback. The silent online service remains foreground and
+holds a per-night partial wake lock, including while unavailable, so errors do not abandon the
+timer. The lock releases when the night ends or stops (including a source switch), even if a
+controller keeps the service bound; a new online night reacquires it. Destruction also releases it.
+The menu remains explicitly reachable during online blackout; opening it is a remote action.
+
+Catalog gain only attenuates the existing envelope, and AudioControl still has no system-volume
+write API. Host fake tests establish transitions and handoffs, not real decoding, audibility,
+wake behavior or API/ABI runtime support. See the [client contract](collection-client-contract.md).

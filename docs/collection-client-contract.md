@@ -2,7 +2,8 @@
 
 Status: **direction and client platform decided, contract draft.** The client is the Dremla APK on
 the TV ([Client platform](#client-platform)). The catalog fixture vectors and their checker exist, and
-the server catalog and playlist management is implemented by #48. No client is implemented yet.
+the server catalog and playlist management is implemented by #48. The opt-in, NoSession TV client
+is implemented by #54; see [Implemented client slice](#implemented-client-slice-54) for its verification limits.
 
 ## Direction
 
@@ -84,12 +85,12 @@ them to the server.
 
 The client flow for the first slice:
 
-1. Fetch the catalog over HTTPS from the management server. Keep the last valid catalog locally. If
+1. Fetch the public catalog export over HTTPS from the fixed collection origin. Keep the last valid catalog locally. If
    the fetch fails, use the last valid catalog. A new catalog is used only after it validates.
 2. Compute the selection and the play order. The existing shuffle-bag and never-again rules apply to
    the selection's track IDs, which keep their stable `yt-<videoId>` identity.
 3. For each track to play, a **resolver** turns the reference into a playable stream on the client,
-   using the user's own YouTube session there. Stream URLs are short-lived and are never stored
+   using the client-local session boundary (currently NoSession only). Stream URLs are short-lived and are never stored
    beyond the session or sent anywhere.
 4. The existing player engine plays the stream with the existing semantics:
    - launcher start only;
@@ -103,7 +104,11 @@ The client flow for the first slice:
 
 ### Failure semantics
 
-These are pinned by `contracts/fixtures/playback-*.json` and recomputed by the checker:
+These are pinned by `contracts/fixtures/playback-*.json` and recomputed by the checker.
+The vectors use a fixed round-robin order over a unique, unchanging selection; that order
+cannot revisit a failed track before visiting every other selected track. A separate checker
+regression supplies a shuffle-bag boundary order (A ends, B fails, C fails, B fails, then A)
+to verify distinct-ID counting and trackEnd reset; the app also tests fresh and persisted bags:
 
 - **A resolve or network error is never a successful play.** The track is marked failed (fixed reason
   codes: `login-required`, `unavailable`, `age-restricted`, `network`, `live-or-playlist`), the state
@@ -112,8 +117,9 @@ These are pinned by `contracts/fixtures/playback-*.json` and recomputed by the c
   one retry. A stream that drops mid-track gets one resume attempt at the last position. Both draw
   on one per-night budget of three. The per-track allowance resets when the next track starts. When
   the allowance or the budget is used up, the track counts as failed and the engine moves on.
-- **Persistent failure stops sound, not the night.** The failure streak counts failed tracks since the
-  last track that played to its end. When the streak covers the whole selection, the session enters
+- **Persistent failure stops sound, not the night.** The failure streak counts distinct failed track IDs
+  since the last track that played to its end. Repeated failures of the same ID across a shuffle-bag
+  boundary count once. When the streak covers the current eligible selection, the session enters
   `unavailable`:
   - no sound;
   - an error message on the menu;
@@ -189,3 +195,74 @@ Still to be verified before live use:
 
 This is an architecture choice, not a permission for device tests; those need their own approval.
 The host-only resolver assessment is tracked separately.
+
+## Implemented client slice (#54)
+
+The TV APK now offers **Music source** in the existing D-pad menu. Downloaded remains the
+persisted default. Choosing Online opts in; choosing Downloaded restores the existing source.
+A source change stops the current session and does not autoplay: the next launcher start starts
+that source. Offline audio, manifest, likes/blocks and the existing night journal are not migrated.
+Online shuffle progress uses separate preference keys. The historical resolver spike is unchanged.
+
+Online launch starts synchronously from the last valid local catalog when one exists; the
+bounded refresh is used on the next launch. Without a local catalog, launch waits for that attempt.
+The refresh fetches `https://html.me.uk/t/dremla/catalog/current.json` with bounded transport
+timeouts, no redirects and a 2 MiB limit. Only a strict `dremla.catalog/1` document can replace
+`files/online-catalog/current.json`, using atomic replacement; lower versions are refused.
+A failed fetch/validation keeps the last valid catalog. With none, online mode becomes silent and
+unavailable (needs catalog), with the normal sleep timer. It never falls back to downloaded audio.
+An active night retains its catalog snapshot. There is no polling or recovery autoplay.
+
+`StreamResolver`, `FixtureResolver`, the NewPipe v0.26.5 adapter and `SessionProvider` are in the
+app. **Only `NoSession` is supplied. Sign-in is not implemented.** Blocking extraction runs on IO;
+cancellation and session/attempt tokens discard stale work. URLs and request headers are transient
+player input, never journal, preference or MediaSession metadata. MediaItems expose only an
+opaque per-attempt URI; the data source substitutes the real URL and headers inside the process.
+The downloader merges scoped Cookie headers at the boundary, but there is no cookie acquisition/storage/provider. Redirects fail closed as unavailable.
+The adapter prefers original/unspecified audio over dubbed tracks, then AAC and bitrate.
+
+The real engine drives `OnlineNight` with resolver and player events. A successful resolution is
+not playing until the player reports first audio. A start network/expired-media error gets one
+re-resolution, and a mid-track network drop gets one re-resolution with the last position. Both
+spend the shared budget of three. Failure streak resets only at track end. Unavailable keeps the
+night's original timer, a silent foreground service and a partial wake lock until the night ends.
+Only a new launcher start can recover it. The normal 30-second fade, sleep fade, black screen,
+sleep route and no-morning-restart rules still apply. `gainDb` multiplies player gain by
+`10^(gainDb/20)`; system volume remains read-only.
+
+### Catalog delivery proposal (future operator step; not executed)
+
+The catalog service remains loopback-only. The operator first commits/publishes a catalog version
+in that service, reviews the export for public-safe references/metadata, then exports and uploads
+only `current.json`. Proposed commands, run with the operator's existing service address and
+publication credential supplied in the environment (never placed in the document):
+
+```sh
+set -eu
+set +x
+: "${DREMLA_CATALOG_SERVICE:?loopback collection-service origin required}"
+: "${POMOI_TOKEN:?existing publication token required}"
+curl --fail --silent --show-error --max-time 15 \
+  "$DREMLA_CATALOG_SERVICE/catalog/current.json" --output current.json
+# Review current.json before the following public upload.
+curl --fail-with-body --silent --show-error --max-time 120 \
+  -X PUT -H "Authorization: Bearer $POMOI_TOKEN" \
+  -H 'Content-Type: application/json; charset=utf-8' \
+  -H 'private: false' -H 'expire: never' \
+  --data-binary @current.json https://html.me.uk/t/dremla/catalog/current.json
+```
+
+This is a proposal, not a deployment. The endpoint may still return 404. No catalog publication,
+real extraction, login, OAuth, cookies, live network probe, installation or device action was done
+for this slice.
+
+### Verification boundary
+
+Host verification covers the strict catalog fixtures, last-valid/monotonic storage, opt-in and
+switch-back, all six playback vectors through the actual engine with fake resolver/player/clock,
+cancellation and stale callbacks, Media3 error/header handoff with constructed fakes, attenuation,
+offline regressions, lint, golden scenes, APK inspection and existing repository gates.
+
+**Not verified:** real extraction/challenge handling, sign-in, real media/network playback,
+API 28–32 or ARM32 runtime behavior, on-device foreground/wake behavior, audible fades and CEC.
+Host compilation/desugaring does not establish any of those. Live checks remain a separate task.

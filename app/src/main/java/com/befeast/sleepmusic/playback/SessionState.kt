@@ -35,6 +35,9 @@ data class NowPlaying(
  * emits only when something visible changes.
  */
 data class SessionState(
+    val online: Boolean = false,
+    val onlinePhase: String? = null,
+    val onlineFailure: String? = null,
     val phase: Phase = Phase.Idle,
     /** Persisted menu preference, effective at timer completion. */
     val tvOff: Boolean = true,

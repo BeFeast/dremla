@@ -30,6 +30,10 @@ for path in Path('app/src').rglob('*'):
         for raw in re.findall(r'(?:https?|wss?|ftp)://[^\s"<>\x27)]+', line):
             if raw in {'http://schemas.android.com/apk/res/android', 'http://schemas.android.com/tools', 'http://schemas.android.com/apk/res-auto'} and path.suffix == '.xml':
                 continue
+            # Only the canonical reference builder in the resolver may contain this literal.
+            if (path.as_posix() == 'app/src/main/java/com/befeast/sleepmusic/online/NewPipeResolver.kt'
+                    and raw == 'https://www.youtube.com/watch?v=$videoId'):
+                continue
             url = urlsplit(raw)
             if url.scheme != 'https' or url.netloc != 'html.me.uk':
                 errors.append(f'{path}:{number}: non-collection endpoint')

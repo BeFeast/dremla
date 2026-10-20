@@ -48,6 +48,7 @@ class FakePlayerPort(private val clock: Clock, private val log: MutableList<Stri
         started += current.trackId
         playing = false
         resetPosition()
+        positionBaseMs = current.startPositionMs
         if (play) startPlaying()
     }
 

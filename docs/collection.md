@@ -101,14 +101,18 @@ These commands are operator verification instructions, not executed by this impl
 
 ## Privacy gate and verification
 
-`writeRuntimeDependencies` emits the union of resolved debug/release runtime module coordinates.
+`writeRuntimeDependencies` emits the union of resolved debug/release runtime and core-library-desugaring coordinates, including
+versions. The latter includes both the NIO library and its configuration artifact at 2.1.5.
 `check-privacy.sh` requires an exact match to the reviewed `runtime-dependencies.txt` allowlist and
 fails on unreviewed local file dependencies (including JAR/AAR files and file trees) and
 rejects telemetry/analytics/crash-reporting identifiers even if added to that list. The list contains
-AndroidX UI/media/support libraries, Kotlin/coroutines, Guava and annotations. AndroidX tracing is
+AndroidX UI/media/support libraries, Kotlin/coroutines, Guava, annotations, and the explicitly
+reviewed NewPipe v0.26.5 graph (nanojson, jsoup, protobuf-javalite, jsr305, Rhino/rhino-engine).
+`docs/runtime-dependencies.txt` records exact resolved versions; changing one requires review. AndroidX tracing is
 local platform tracing, not a network reporting SDK. A dependency addition requires explicit review.
-The same gate checks literal endpoints in shipping Kotlin, Java and XML; only the HTTPS collection
-host and XML schema namespace declarations are accepted. It is a static check, not a proof against
+The same gate checks literal endpoints in shipping Kotlin, Java and XML; the HTTPS collection
+host, XML schema declarations, and one exact canonical YouTube watch-URL builder in
+`online/NewPipeResolver.kt` are accepted. Other YouTube literals/paths/files remain forbidden. It is a static check, not a proof against
 obfuscated or dynamically assembled endpoints. Runtime origin enforcement complements it.
 `test-privacy.sh` covers clean input, foreign hosts, cleartext, a host-name suffix attack, WebSocket,
 an unreviewed transitive, forbidden telemetry, missing graph evidence, and executable local JAR, AAR and fileTree rejection fixtures. Both run in verify-outcome.
@@ -119,3 +123,14 @@ LibraryTest, playback no-autoplay tests, permission checks and golden scenes rem
 operator test is a real first download, an offline launcher start, a refresh outage during playback,
 and dumps before and after night completion. Verify by ear and advancing position, not playback
 state alone. No device or adb operation is part of this change's automated verification.
+
+## Opt-in online source (#54)
+
+Downloaded collection remains the default and keeps its origin enforcement. Online mode uses a
+separate catalog repository and a lazy downloaded-source factory: online launch never invokes
+the offline loader/pruner/downloader. Source selection is explicit and persisted in the menu;
+switching stops the night and waits for a launcher start. Online shuffle progress is separate.
+Only the resolver/player online path can contact extraction and media endpoints. No collection
+origin rule or zero-native-library APK check is relaxed. See the
+[client contract](collection-client-contract.md#implemented-client-slice-54) for failure behavior,
+the unexecuted catalog delivery proposal, and host/runtime verification limits.

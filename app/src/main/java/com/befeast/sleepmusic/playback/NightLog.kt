@@ -55,7 +55,8 @@ class NightLog(context: Context, private val now: () -> Long = System::currentTi
     @Synchronized
     override fun playbackError(sessionId: Int, code: String) {
         // Media3 error names are fixed tokens; never persist arbitrary caller text.
-        append("error", if (code.matches(Regex("ERROR_CODE_[A-Z0-9_]{1,80}"))) code else "PlaybackFailed")
+        append("error", if (code.matches(Regex("ERROR_CODE_[A-Z0-9_]{1,80}")) ||
+            com.befeast.sleepmusic.online.FailureReason.entries.any { it.code == code }) code else "PlaybackFailed")
     }
 
     @Synchronized

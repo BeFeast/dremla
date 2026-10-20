@@ -43,11 +43,13 @@ class MainActivity : ComponentActivity() {
         WindowInsetsControllerCompat(window, window.decorView).hide(WindowInsetsCompat.Type.systemBars())
         controls.onUiEntry(LaunchClassifier.classify(launchSignal(intent, LaunchEntry.Create, savedInstanceState)))
         lifecycleScope.launch {
+            var wasBlack = false
             controls.state.collect { state ->
                 // Normal idle/screensaver only; inattentive sleep is an install prerequisite (night.md).
                 if (state.isActive) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                if (state.blackScreen || state.phase == com.befeast.sleepmusic.playback.Phase.Finished) menuOpen.value = false
+                if ((state.blackScreen && !wasBlack) || state.phase == com.befeast.sleepmusic.playback.Phase.Finished) menuOpen.value = false
+                wasBlack = state.blackScreen
                 if (state.closeActivity) finishAndRemoveTask()
             }
         }
@@ -60,6 +62,7 @@ class MainActivity : ComponentActivity() {
                 onTimer = controls::setTimerMinutes,
                 onTvOff = { controls.setTvOff(!session.tvOff) },
                 onRefresh = { downloads?.refresh(); menuOpen.value = false },
+                onSource = if ((application as PlaybackProvider).playback.supportsOnline) ({ controls.setOnline(!session.online) }) else null,
                 onLike = controls::toggleLike, onNever = controls::neverAgain,
                 onOpenMenu = { menuOpen.value = true; controls.refreshSleepRoute() })
         }
@@ -98,7 +101,7 @@ class MainActivity : ComponentActivity() {
     /** A long press of OK cancels its release; #6 opens the menu here. */
     override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
         if (!RemoteKeyMap.consumesLongPress(keyCode)) return super.onKeyLongPress(keyCode, event)
-        if (!controls.state.value.blackScreen && controls.state.value.phase != com.befeast.sleepmusic.playback.Phase.Finished) {
+        if ((!controls.state.value.blackScreen || controls.state.value.online) && controls.state.value.phase != com.befeast.sleepmusic.playback.Phase.Finished) {
             menuOpen.value = true
             controls.refreshSleepRoute()
         }

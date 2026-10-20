@@ -1,5 +1,9 @@
 package com.befeast.sleepmusic.playback
 
+import com.befeast.sleepmusic.online.*
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import java.io.File
 import android.app.Application
 import android.media.AudioManager
 import androidx.annotation.OptIn
@@ -20,6 +24,7 @@ import kotlinx.coroutines.SupervisorJob
  */
 interface PlaybackGraph {
     val downloads: DownloadCollectionSource? get() = null
+    val supportsOnline: Boolean get() = false
     val controls: PlaybackControls
 
     /** The player the MediaSession wraps ([SessionPlayer] in production). */
@@ -41,8 +46,15 @@ class AppPlaybackGraph internal constructor(
     private val clock: Clock = ElapsedRealtimeClock,
     private val playerFactory: (() -> Player)? = null,
 ) : PlaybackGraph {
+    private val streamHeaders = StreamHeaders()
+    private val preferences by lazy { SharedPrefsPlaybackStore(app) }
+    private val selectable by lazy { SelectableSource(scope, preferences, { offlineDownloads },
+        CatalogRepository(File(app.filesDir, "online-catalog/current.json"))) }
+    override val supportsOnline: Boolean get() = collectionSource == null
+
     private val exoPlayer: Player by lazy {
         playerFactory?.invoke() ?: ExoPlayer.Builder(app)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(streamHeaders.factory(DefaultDataSource.Factory(app))))
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
@@ -57,8 +69,10 @@ class AppPlaybackGraph internal constructor(
     private val nightLog by lazy {
         (app as? com.befeast.sleepmusic.SleepMusicApp)?.nightLog ?: NightLog(app)
     }
-    override val downloads by lazy {
-        if (collectionSource != null) null else DownloadCollectionSource(
+    override val downloads: DownloadCollectionSource?
+        get() = if (collectionSource != null || preferences.enabled) null else offlineDownloads
+    private val offlineDownloads by lazy {
+        DownloadCollectionSource(
             app, scope, keepId = { engine.state.value.track?.id }, onError = { nightLog.collectionError() },
         )
     }
@@ -67,10 +81,10 @@ class AppPlaybackGraph internal constructor(
         PlaybackEngine(
             scope = scope,
             clock = clock,
-            port = ExoPlayerPort { exoPlayer },
+            port = ExoPlayerPort(streamHeaders) { exoPlayer },
             audio = SystemAudioControl(app.getSystemService(AudioManager::class.java)),
-            store = SharedPrefsPlaybackStore(app),
-            source = collectionSource ?: checkNotNull(downloads),
+            store = preferences,
+            source = collectionSource ?: selectable,
             host = ServicePlaybackHost(app),
             events = nightLog,
             sleepRoute = AndroidSleepRoute(app),

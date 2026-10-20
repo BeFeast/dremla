@@ -87,12 +87,12 @@ class Night:
     """Reference state machine for the online failure semantics.
 
     phases: starting (resolving the current track), playing, resuming (after a drop),
-    unavailable (consecutive failures covered the whole selection; silent, timer still running),
+    unavailable (distinct failed IDs covered the whole selection; silent, timer still running),
     finished (timer expired).
 
     Budget: start retries and resume attempts share MAX_RETRIES_PER_NIGHT. A track gets at most
     one start retry (network only) and at most one resume per play attempt; the per-track
-    allowances reset when the next track is started. The failure streak counts failed tracks
+    allowances reset when the next track is started. The failure streak counts distinct failed track IDs
     since the last track that played to its end (trackEnd), so endless start-and-drop loops end in
     `unavailable` instead of a retry storm. Errors never stop or extend the timer; recovery never
     autoplays.
@@ -100,7 +100,8 @@ class Night:
 
     def __init__(self, sel):
         self.sel, self.index, self.phase = sel, 0, "starting"
-        self.timer, self.streak, self.budget = "running", 0, MAX_RETRIES_PER_NIGHT
+        self.timer, self.budget = "running", MAX_RETRIES_PER_NIGHT
+        self.failed_tracks = set()
         self.start_retried = self.resumed = False
 
     def _next_track(self):
@@ -108,9 +109,12 @@ class Night:
         self.start_retried = self.resumed = False
 
     def _fail(self):
-        self.streak += 1
-        self._next_track()
-        self.phase = "unavailable" if self.streak >= len(self.sel) else "starting"
+        self.failed_tracks.add(self.sel[self.index])
+        if self.failed_tracks.issuperset(self.sel):
+            self.phase = "unavailable"
+        else:
+            self._next_track()
+            self.phase = "starting"
 
     def apply(self, step):
         event = step["event"]
@@ -145,7 +149,7 @@ class Night:
                 self._fail()
         elif event == "trackEnd":
             need(self.phase == "playing", "trackEnd outside playing")
-            self.streak = 0
+            self.failed_tracks.clear()
             self._next_track()
             self.phase = "starting"
         else:
@@ -168,6 +172,39 @@ def main():
         except (Invalid, KeyError, TypeError, StopIteration, ValueError) as error:
             failures.append(label)
             print("FAIL", label, "-", error)
+
+    def distinct_failures():
+        night = Night(["A", "B", "C"])
+        # A shuffle-bag boundary may revisit B before A. Keep this outside the
+        # round-robin vectors: only the next-track order differs from their model.
+        order = iter([1, 2, 1, 0])
+        next_track = night._next_track
+        def shuffled_next():
+            next_track()
+            night.index = next(order)
+        night._next_track = shuffled_next
+        night.apply({"event": "resolve", "track": "A", "result": "ok"})
+        night.apply({"event": "trackEnd"})
+        for track in ["B", "C", "B"]:
+            night.apply({"event": "resolve", "track": track, "result": "unavailable"})
+            need(night.phase == "starting", "repeated failed ID hid an untried track")
+        need(night.sel[night.index] == "A", "working track was not retried")
+        night.apply({"event": "resolve", "track": "A", "result": "unavailable"})
+        need(night.phase == "unavailable", "all distinct failed IDs must stop sound")
+        # A completed track clears the distinct-ID set for the next streak.
+        night = Night(["A", "B", "C"])
+        night.apply({"event": "resolve", "track": "A", "result": "unavailable"})
+        night.apply({"event": "resolve", "track": "B", "result": "ok"})
+        night.apply({"event": "trackEnd"})
+        order = iter([1, 0])
+        next_track = night._next_track
+        night._next_track = shuffled_next
+        for track in ["C", "B"]:
+            night.apply({"event": "resolve", "track": track, "result": "unavailable"})
+            need(night.phase == "starting", "trackEnd did not clear the failed IDs")
+        night.apply({"event": "resolve", "track": "A", "result": "unavailable"})
+        need(night.phase == "unavailable", "new streak must cover the selection")
+    check("distinct failures across order boundary and trackEnd reset", distinct_failures)
 
     catalogs = {}
     for path in sorted(ROOT.glob("catalog-v*.json")):

@@ -7,6 +7,9 @@ import com.befeast.sleepmusic.playback.SleepTimer
 class InMemoryPlaybackStore : PlaybackStore {
     private val likedIds = linkedSetOf<String>()
     private val blockedIds = linkedSetOf<String>()
+    private var onlineState = BagState()
+    override fun onlineBag() = onlineState
+    override fun saveOnlineBag(state: BagState) { onlineState = state }
     private var bagState = BagState()
     private var timer = SleepTimer.DEFAULT_MINUTES
     val bagHistory = mutableListOf<BagState>()

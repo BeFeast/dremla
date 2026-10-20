@@ -39,6 +39,7 @@ android {
     }
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -78,6 +79,8 @@ roborazzi {
 }
 
 dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
     val composeBom = platform(libs.androidx.compose.bom)
 
     implementation(composeBom)
@@ -92,6 +95,7 @@ dependencies {
 
     testImplementation(composeBom)
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.roborazzi)
@@ -102,6 +106,7 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     // Shared build hosts: one test JVM at a time.
+    systemProperty("fixtures", rootProject.file("contracts/fixtures").absolutePath)
     maxParallelForks = 1
     maxHeapSize = "2g"
 }
@@ -112,7 +117,7 @@ tasks.register("writeRuntimeDependencies") {
     outputs.file(report)
     outputs.upToDateWhen { false }
     doLast {
-        val coordinates = listOf("debugRuntimeClasspath", "releaseRuntimeClasspath").flatMap { name ->
+        val coordinates = listOf("debugRuntimeClasspath", "releaseRuntimeClasspath", "coreLibraryDesugaring").filter { configurations.findByName(it) != null }.flatMap { name ->
             val configuration = configurations.getByName(name)
             val artifacts = configuration.resolvedConfiguration.resolvedArtifacts
             val moduleFiles = artifacts.map { it.file }.toSet()
@@ -120,7 +125,7 @@ tasks.register("writeRuntimeDependencies") {
                 "Unreviewed local runtime file dependency"
             }
             artifacts.map {
-                "${it.moduleVersion.id.group}:${it.moduleVersion.id.name}"
+                "${it.moduleVersion.id.group}:${it.moduleVersion.id.name}:${it.moduleVersion.id.version}"
             }
         }.distinct().sorted()
         report.get().asFile.apply { parentFile.mkdirs(); writeText(coordinates.joinToString("\n", postfix = "\n")) }

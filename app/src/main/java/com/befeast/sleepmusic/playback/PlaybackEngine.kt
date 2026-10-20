@@ -2,6 +2,11 @@ package com.befeast.sleepmusic.playback
 
 import com.befeast.sleepmusic.ShuffleBag
 import com.befeast.sleepmusic.Track
+import com.befeast.sleepmusic.online.*
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -34,6 +39,8 @@ class PlaybackEngine(
     private val events: SessionEvents = SessionEvents.NONE,
     random: Random = Random.Default,
     private val sleepRoute: SleepRoute = SleepRoute.NONE,
+    private val resolver: StreamResolver = NewPipeResolver(),
+    private val resolverDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : PlaybackControls {
 
     private class Session(val id: Int, val timer: SleepTimer, val startedAtMs: Long) {
@@ -52,15 +59,27 @@ class PlaybackEngine(
         /** [PlayerPort.advance] was called and its [PlayerPort.Listener.onAdvanced] has not arrived yet. */
         var advancing = false
 
+        var night: OnlineNight? = null
+        var onlineCollection: PlayableCollection? = null
+        var onlineTracks: Map<String, CatalogTrack> = emptyMap()
+        var gain = 1f
+        var token = 0L
+        var awaitingAudio = false
         var consecutiveErrors = 0
         var nowPlaying: NowPlaying? = null
         var durationMs: Long = -1
         var integratedLufs: Double? = null
     }
 
-    private val queue = PlayQueue(ShuffleBag(random), store)
+    private val queue = PlayQueue(ShuffleBag(random), object : PlaybackStore by store {
+        override fun bag() = if (source.online) store.onlineBag() else store.bag()
+        override fun saveBag(state: BagState) {
+            if (source.online) store.saveOnlineBag(state) else store.saveBag(state)
+        }
+    })
     private val envelope = VolumeEnvelope()
     private val mutableState = MutableStateFlow(SessionState(
+        online = source.online,
         timerMinutes = store.timerMinutes,
         tvOff = store.tvOff,
         sleepRouteStatus = sleepRoute.status(),
@@ -71,12 +90,23 @@ class PlaybackEngine(
     private var sessionCounter = 0
     private var pendingStart = false
     private var tickJob: Job? = null
+    private var resolveJob: Job? = null
     private var lastGain = -1f
     private var playableCount = 0
 
     private val portListener = object : PlayerPort.Listener {
         override fun onPlaying() {
-            val s = session ?: return
+            val s = callbackSession() ?: return
+            val night = s.night
+            if (night != null) {
+                if (!s.awaitingAudio || night.phase !in setOf("starting", "resuming")) return
+                s.awaitingAudio = false
+                if (!s.paused) envelope.rampTransport(1.0, VolumeEnvelope.RESUME_RAMP_MS)
+                val resumed = night.phase == "resuming"
+                night.apply(if (resumed) "resume" else "resolve", night.currentTrack, "ok")
+                if (!resumed) events.trackStarted(s.id, night.currentTrack)
+                publish()
+            }
             envelope.markPlaying(clock.nowMs())
             s.consecutiveErrors = 0
         }
@@ -84,7 +114,11 @@ class PlaybackEngine(
         override fun onAdvanced() = handleAdvanced()
 
         override fun onEnded() {
-            if (session != null) finish(EndReason.NothingToPlay)
+            val s = callbackSession() ?: return
+            if (s.night != null) {
+                if (s.awaitingAudio) onlineError(s, FailureReason.UNAVAILABLE.code)
+                else if (s.night?.phase == "playing") { s.night?.apply("trackEnd"); resolveOnline(s) }
+            } else finish(EndReason.NothingToPlay)
         }
 
         override fun onPausedBySystem() {
@@ -110,10 +144,14 @@ class PlaybackEngine(
     override fun onUiEntry(verdict: LaunchVerdict) {
         events.uiEntry(verdict)
         if (!verdict.isLauncherStart) return
+        source.onLaunch()
+        if (session?.night?.phase == "unavailable") finish(EndReason.Stopped)
         if (commandSession(allowDismiss = false) != null) {
             play(CommandSource.Remote)
             return
         }
+        // A new accepted launch must not replay the previous night's Activity dismissal.
+        mutableState.update { it.copy(phase = Phase.Idle, closeActivity = false, endReason = null) }
         val collection = source.collection.value
         if (collection == null) {
             pendingStart = true
@@ -126,7 +164,7 @@ class PlaybackEngine(
         pendingStart = false
         val eligible = eligibleIds(collection)
         playableCount = eligible.size
-        if (eligible.isEmpty()) {
+        if (eligible.isEmpty() && !source.online) {
             mutableState.update { it.copy(collectionLoaded = true, playableCount = 0) }
             return
         }
@@ -137,16 +175,28 @@ class PlaybackEngine(
         val volume = StartVolumeSequence.observe(audio)
         val now = clock.nowMs()
         val minutes = SleepTimer.sanitize(store.timerMinutes)
-        val first = queue.begin(eligible) ?: return
+        val first = queue.begin(eligible)
+        if (first == null && !source.online) return
         val s = Session(++sessionCounter, SleepTimer.start(now, minutes), now)
         session = s
         envelope.reset(now)
-        describe(s, collection, first.id)
-        port.load(item(collection, first.id), queue.upNext?.let { item(collection, it.id) })
+        if (source.online) {
+            s.onlineCollection = collection
+            s.onlineTracks = eligible.mapNotNull { id -> source.onlineTrack(id)?.let { id to it } }.toMap()
+            s.night = OnlineNight(eligible.ifEmpty { listOf("") }, next = {
+                val available = eligibleIds(collection)
+                queue.revalidate(available)
+                queue.promote(available)?.id.orEmpty()
+            }, initial = first?.id.orEmpty())
+            if (first == null) s.night!!.apply("resolve", "", "unavailable")
+        } else {
+            describe(s, collection, first!!.id)
+            port.load(item(collection, first.id), queue.upNext?.let { item(collection, it.id) })
+        }
         publish()
         host.sessionStarted()
         events.sessionStarted(s.id, minutes, volume)
-        events.trackStarted(s.id, first.id)
+        if (s.night != null) resolveOnline(s) else events.trackStarted(s.id, first!!.id)
         tickJob?.cancel()
         tickJob = scope.launch {
             while (isActive) {
@@ -160,6 +210,7 @@ class PlaybackEngine(
 
     override fun togglePause(source: CommandSource) {
         val s = commandSession() ?: return
+        if (s.night?.phase == "unavailable") return
         if (s.paused) resume(s) else pause(s)
     }
 
@@ -200,7 +251,9 @@ class PlaybackEngine(
         s.pausePending = false
         if (!s.skipPending) {
             if (s.playerPaused) unpausePlayer(s)
-            envelope.rampTransport(1.0, VolumeEnvelope.RESUME_RAMP_MS)
+            // Resolution and buffering can outlast the ramp. First audio owns its start.
+            if (s.night?.phase in setOf("starting", "resuming")) envelope.setTransport(0.0)
+            else envelope.rampTransport(1.0, VolumeEnvelope.RESUME_RAMP_MS)
         }
         publish()
     }
@@ -214,6 +267,15 @@ class PlaybackEngine(
 
     override fun skip(source: CommandSource) {
         val s = commandSession() ?: return
+        if (s.night?.phase == "unavailable") return
+        if (s.night != null) {
+            invalidateResolution(s)
+            s.night!!.skip()
+            s.paused = false; s.playerPaused = false
+            envelope.setTransport(0.0)
+            resolveOnline(s)
+            return
+        }
         if (s.skipPending) return
         s.skipPending = true
         // A skip resumes a paused session; a pause pressed during the skip ramp applies to the new track.
@@ -226,6 +288,20 @@ class PlaybackEngine(
             envelope.rampTransport(0.0, VolumeEnvelope.SKIP_RAMP_MS)
             publish()
         }
+    }
+
+    override fun setOnline(enabled: Boolean) {
+        if (source.online == enabled) return
+        stop(CommandSource.Menu)
+        // Reset before the source can synchronously re-emit its downloaded collection.
+        mutableState.value = SessionState(online = enabled, timerMinutes = store.timerMinutes,
+            tvOff = store.tvOff, sleepRouteStatus = sleepRoute.status())
+        source.setOnline(enabled)
+        onCollection(source.collection.value)
+    }
+
+    override fun onServiceDestroyed() {
+        if (session?.night != null) stop(CommandSource.System)
     }
 
     override fun cancelPendingStart() { pendingStart = false }
@@ -247,10 +323,11 @@ class PlaybackEngine(
         val s = session ?: return
         val id = queue.current?.id ?: return
         store.block(id)
-        val collection = source.collection.value ?: PlayableCollection.EMPTY
+        val collection = s.onlineCollection ?: source.collection.value ?: PlayableCollection.EMPTY
         val eligible = eligibleIds(collection)
         playableCount = eligible.size
-        if (queue.revalidate(eligible)) port.setUpNext(queue.upNext?.let { item(collection, it.id) })
+        s.night?.eligibleSelection = eligible.toSet()
+        if (queue.revalidate(eligible) && s.night == null) port.setUpNext(queue.upNext?.let { item(collection, it.id) })
         s.nowPlaying = s.nowPlaying?.copy(liked = false)
         publish()
         skip(CommandSource.Menu)
@@ -309,7 +386,8 @@ class PlaybackEngine(
     }
 
     private fun handleError(code: String) {
-        val s = session ?: return
+        val s = callbackSession() ?: return
+        if (s.night != null) { onlineError(s, code); return }
         events.playbackError(s.id, code)
         s.consecutiveErrors++
         if (s.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
@@ -341,6 +419,7 @@ class PlaybackEngine(
 
     private fun onCollection(collection: PlayableCollection?) {
         if (collection == null) return
+        if (session?.night != null) return
         if (pendingStart && session == null) {
             startSession(collection)
             return
@@ -348,7 +427,8 @@ class PlaybackEngine(
         val eligible = eligibleIds(collection)
         playableCount = eligible.size
         if (session == null) {
-            mutableState.update { it.copy(collectionLoaded = true, playableCount = eligible.size) }
+            mutableState.update { it.copy(collectionLoaded = true, playableCount = eligible.size, online = source.online,
+                onlinePhase = if (source.online && eligible.isEmpty()) "unavailable" else it.onlinePhase) }
             return
         }
         if (queue.revalidate(eligible)) port.setUpNext(queue.upNext?.let { item(collection, it.id) })
@@ -365,7 +445,7 @@ class PlaybackEngine(
             return
         }
         val gain = envelope.gain(now, port.positionMs, trackDurationMs(s), s.timer.sleepGain(now), s.integratedLufs)
-        setGain(gain)
+        setGain(if (s.night != null && s.night?.phase != "playing") 0f else gain * s.gain)
         if (envelope.transportSilent) {
             if (s.skipPending) {
                 if (!s.advancing) advanceNow()
@@ -393,7 +473,10 @@ class PlaybackEngine(
 
     private fun finish(reason: EndReason, allowSleep: Boolean = true, allowDismiss: Boolean = true) {
         val s = session ?: return
+        s.night?.apply("timerExpired")
+        invalidateResolution(s)
         session = null
+        port.setListener(portListener)
         pendingStart = false
         tickJob?.cancel()
         tickJob = null
@@ -401,6 +484,9 @@ class PlaybackEngine(
         port.stopAndClear()
         queue.clear()
         mutableState.value = SessionState(
+            online = source.online,
+            onlinePhase = s.night?.phase,
+            onlineFailure = s.night?.lastFailure?.code,
             phase = Phase.Finished,
             blackScreen = true,
             tvOff = store.tvOff,
@@ -432,6 +518,85 @@ class PlaybackEngine(
         }
     }
 
+    // Resolution and Media3 callbacks share a session generation and an attempt token.
+    private fun invalidateResolution(s: Session) {
+        s.token++
+        s.awaitingAudio = false
+        resolveJob?.cancel(); resolveJob = null
+    }
+
+    private fun callbackSession(): Session? = session?.takeIf {
+        it.night == null || it.timer.remainingMs(clock.nowMs()) > 0
+    }
+
+    private fun resolveOnline(s: Session) {
+        invalidateResolution(s)
+        envelope.setTransport(0.0)
+        port.setListener(null)
+        port.stopAndClear()
+        setGain(0f)
+        val night = s.night ?: return
+        if (night.phase !in setOf("starting", "resuming")) { publish(); return }
+        val collection = s.onlineCollection ?: return
+        val id = night.currentTrack.takeIf { it in eligibleIds(collection) } ?: run {
+            night.eligibleSelection = emptySet()
+            s.nowPlaying = null
+            night.apply(if (night.phase == "resuming") "resume" else "resolve", night.currentTrack, "unavailable")
+            publish(); return
+        }
+        describe(s, collection, id)
+        val track = s.onlineTracks[id] ?: return
+        s.gain = track.gain
+        val token = s.token
+        val resuming = night.phase == "resuming"
+        val position = if (resuming) night.resumePositionMs else 0L
+        publish()
+        resolveJob = scope.launch {
+            val result = try {
+                runInterruptible(resolverDispatcher) { resolver.resolve(track.videoId, NoSession) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Throwable) {
+                if (error is VirtualMachineError) throw error
+                Failure(NewPipeResolver.reasonFor(error))
+            }
+            if (session !== s || token != s.token || callbackSession() !== s) return@launch
+            if (result is Failure) {
+                events.playbackError(s.id, result.reason.code)
+                night.apply(if (resuming) "resume" else "resolve", night.currentTrack, result.reason.code)
+                resolveOnline(s)
+            } else if (result is Resolved) {
+                s.awaitingAudio = true
+                port.setListener(object : PlayerPort.Listener {
+                    private fun deliver(action: () -> Unit) {
+                        if (session === s && token == s.token && callbackSession() === s) action()
+                    }
+                    override fun onPlaying() = deliver { portListener.onPlaying() }
+                    override fun onAdvanced() = Unit
+                    override fun onEnded() = deliver { portListener.onEnded() }
+                    override fun onPausedBySystem() = deliver { portListener.onPausedBySystem() }
+                    override fun onError(code: String) = deliver { portListener.onError(code) }
+                })
+                port.load(QueueItem(id, null, track.track.title, track.track.artist, result, position), null, !s.paused)
+                s.playerPaused = s.paused
+                publish()
+            }
+        }
+    }
+
+    private fun onlineError(s: Session, code: String) {
+        val night = s.night ?: return
+        if (night.phase in setOf("unavailable", "finished")) return
+        val reason = FailureReason.entries.find { it.code == code } ?: FailureReason.UNAVAILABLE
+        events.playbackError(s.id, reason.code)
+        when (night.phase) {
+            "starting" -> night.apply("resolve", night.currentTrack, reason.code)
+            "resuming" -> night.apply("resume", result = reason.code)
+            "playing" -> if (reason == FailureReason.NETWORK) night.apply("drop", positionMs = port.positionMs.coerceAtLeast(0))
+                else night.failPlaying(reason)
+        }
+        resolveOnline(s)
+    }
+
     // ---- helpers ----
 
     private fun publish() {
@@ -444,6 +609,9 @@ class PlaybackEngine(
             else -> Phase.Playing
         }
         mutableState.value = SessionState(
+            online = source.online,
+            onlinePhase = s.night?.phase,
+            onlineFailure = s.night?.lastFailure?.code,
             phase = phase,
             tvOff = store.tvOff,
             sleepRouteStatus = mutableState.value.sleepRouteStatus,
