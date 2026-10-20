@@ -27,6 +27,10 @@ def run(args, cancelled):
         try:
             while process.poll() is None:
                 checkpoint(cancelled, 0.05)
+            # A control-group stop can reach the child before the main thread's
+            # 0.2 s signal poll. Allow cancellation to catch up before reporting a
+            # tool failure. ffmpeg also uses 255 for a handled termination signal.
+            checkpoint(cancelled, 1 if process.returncode < 0 or process.returncode == 255 else 0)
             require(process.returncode == 0, "processing-failed", "The local media tool failed.")
             output.seek(0)
             error.seek(0)

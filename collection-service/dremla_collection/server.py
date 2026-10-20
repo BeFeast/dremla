@@ -194,7 +194,8 @@ def main():
             # thread may hold (threading.Event.set would).
             stop = []
             previous = {sig: signal.signal(sig, lambda signum, _frame: stop.append(signum))
-                        for sig in (signal.SIGTERM, signal.SIGHUP)}
+                        for sig in (signal.SIGTERM, signal.SIGHUP)
+                        if sig != signal.SIGHUP or signal.getsignal(sig) != signal.SIG_IGN}
             thread = threading.Thread(target=server.serve_forever)
             thread.start()
             print(f"Dremla collection: http://127.0.0.1:{server.server_port}/", flush=True)
@@ -207,9 +208,11 @@ def main():
             except KeyboardInterrupt:
                 pass
             finally:
+                # Run outside the signal handler: Event.set and the condition take locks.
+                # Cancel before shutdown waits for the HTTP serving loop to exit.
+                service.request_stop()
                 server.shutdown()
                 thread.join()
-                service.close()
                 for sig, handler in previous.items():
                     signal.signal(sig, handler)
     finally:

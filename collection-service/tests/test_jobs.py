@@ -92,7 +92,7 @@ class JobTests(ServiceCase):
         self.wait_job(jobs[0]["id"], ("acquiring",))
         states = [j["state"] for j in self.service.list_jobs()]
         self.assertEqual(states, ["acquiring", "queued", "queued", "queued"])
-        self.assert_code("job-running", lambda: self.service.process_draft(draft["id"]))
+        self.assertEqual(self.service.process_draft(draft["id"]), [])
         for job in jobs:
             self.service.control(job["id"], "cancel")
 
@@ -122,7 +122,8 @@ class JobTests(ServiceCase):
                 fault = threading.Event()
                 def fail_write(path, data):
                     candidate = json.loads(data)
-                    if path.name == "jobs.json" and candidate[first["id"]]["state"] in ({"acquiring", "failed"} if failing_state == "all" else {failing_state}):
+                    if (path.name == "jobs.json" and candidate[first["id"]] != self.service.jobs[first["id"]]
+                            and candidate[first["id"]]["state"] in ({"acquiring", "failed"} if failing_state == "all" else {failing_state})):
                         fault.set()
                         raise OSError("fixture storage fault")
                     return atomic_write(path, data)
@@ -137,7 +138,6 @@ class JobTests(ServiceCase):
                     persisted = read_json(self.root / "state/jobs.json")[first["id"]]
                     self.assertEqual(job["state"], persisted["state"])
                 # A new job and a retry can progress once the storage fault is removed.
-                self.service._transition(job, "failed", error=job["error"])
                 self.service.control(first["id"], "retry")
                 self.assertEqual(self.wait_job(first["id"])["state"], "ready")
 

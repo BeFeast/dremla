@@ -12,6 +12,7 @@ import socket
 import subprocess
 import time
 import unittest
+import sys
 
 from dremla_collection.common import read_json
 from dremla_collection.fixtures import SINGLE
@@ -37,6 +38,63 @@ def children(pid):
 
 @unittest.skipUnless(shutil.which("ffmpeg"), "SKIPPED (no ffmpeg)")
 class ShutdownTests(ServiceCase):
+    def test_child_first_group_stop_preserves_retriable_interruption(self):
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(signal=sig):
+                work = self.root / ("child-first-" + sig.name)
+                binary = work / "bin"
+                binary.mkdir(parents=True)
+                marker = work / "child-pid"
+                # A fake media child uses the default signal disposition, giving a negative
+                # return code. Only the first call blocks; retry uses the real local tool.
+                child_code = ("import os,time; from pathlib import Path; "
+                              f"Path({str(marker)!r}).write_text(str(os.getpid())); time.sleep(120)")
+                wrapper = binary / "ffmpeg"
+                wrapper.write_text("#!/bin/sh\nif [ ! -e " + shlex.quote(str(marker)) + " ]; then\n"
+                                   " exec " + shlex.quote(sys.executable) + " -c " + shlex.quote(child_code) + "\nfi\n"
+                                   "exec " + shlex.quote(shutil.which("ffmpeg")) + ' "$@"\n')
+                wrapper.chmod(0o755)
+                env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"],
+                           DREMLA_COLLECTION_DATA=str(work / "state"),
+                           DREMLA_COLLECTION_DEST=str(work / "dest"),
+                           DREMLA_CATALOG_DEST=str(work / "catalog"), DREMLA_COLLECTION_PORT="0",
+                           DREMLA_COLLECTION_ACQUISITION="fixture", DREMLA_COLLECTION_PROCESSOR="ffmpeg")
+                process = self.start(env)
+                child = restarted = None
+                try:
+                    draft = self.request("POST", "drafts", {"url": SINGLE})
+                    job = self.request("POST", f"drafts/{draft['id']}/process", {})[0]
+                    deadline = time.monotonic() + 10
+                    while not marker.exists() and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                    self.assertTrue(marker.exists(), "No media child started")
+                    child = int(marker.read_text())
+                    started = time.monotonic()
+                    os.killpg(child, sig)
+                    process.send_signal(sig)
+                    self.assertEqual(self.wait_stopped(process, child, started), 0)
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(child, 0)
+                    self.assertEqual(read_json(work / "state/jobs.json")[job["id"]]["state"], "interrupted")
+                    restarted = self.start(env)
+                    self.request("POST", f"jobs/{job['id']}/retry", {})
+                    deadline = time.monotonic() + 60
+                    while time.monotonic() < deadline:
+                        result = self.request("GET", "jobs")["jobs"][0]
+                        if result["state"] not in ("queued", "acquiring", "processing"):
+                            break
+                        time.sleep(0.05)
+                    self.assertEqual((result["state"], result["attempt"]), ("ready", 2))
+                finally:
+                    if restarted is not None:
+                        self.stop(restarted)
+                    self.stop(process)
+                    if child is not None:
+                        try:
+                            os.killpg(child, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+
     def start(self, env):
         script = Path(__file__).resolve().parents[2] / "scripts/collection-service.sh"
         process = subprocess.Popen([str(script)], env=env, stdout=subprocess.PIPE,

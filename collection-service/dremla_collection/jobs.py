@@ -76,12 +76,16 @@ class CollectionService:
         value = self.review_decisions if name == "review" else getattr(self, name)
         atomic_write(self.data / (name + ".json"), json_bytes(value))
 
-    def close(self):
+    def request_stop(self):
+        """Cancel work without releasing locks needed by in-flight HTTP requests."""
         with self.condition:
             self.stopping.set()
             for event in self.events.values():
                 event.set()
             self.condition.notify_all()
+
+    def close(self):
+        self.request_stop()
         if self.worker:
             self.worker.join()
         for handle in self.file_locks:
@@ -141,6 +145,13 @@ class CollectionService:
         with self.condition:
             items = [i for i in self.draft(identity)["items"] if i["include"]]
             require(bool(items), "empty-draft", "Include at least one draft item.")
+            # Draft metadata locks after its first job, so draft + track identifies
+            # the revision. Other drafts may deliberately process a new revision.
+            complete_or_active = {j["item"]["id"] for j in self.jobs.values()
+                                  if j.get("draftId") == identity and j["state"] in ACTIVE | {"ready"}}
+            items = [i for i in items if i["id"] not in complete_or_active]
+            if not items:
+                return []
             require(not any(j["state"] in ACTIVE and j["item"]["id"] in {i["id"] for i in items}
                             for j in self.jobs.values()), "job-running", "A track is already queued or running.", 409)
             created = []
@@ -195,8 +206,10 @@ class CollectionService:
             try:
                 self._transition(job, state, error=error)
             except Exception:
-                # Preserve the last state; quarantine a queued job until storage recovers
-                # or restart, while letting later jobs proceed. Never leak a handler error.
+                # The worker has finished this attempt even if storage is unavailable.
+                # Keep it retriable in memory; the next successful jobs write persists
+                # this state too. Restart recovers any stale active state on disk.
+                job["state"] = "interrupted" if self.stopping.is_set() else "failed"
                 job["error"] = {"error": "storage-failed", "message": "Job state could not be saved."}
 
     def _work(self):

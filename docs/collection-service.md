@@ -26,6 +26,10 @@ serving path is a later, separately approved step.
    or `failed` (with a fixed reason code and a short message) or `cancelled`. The operator can
    cancel a queued or running job and retry a failed, cancelled or interrupted one. A job that was
    running when the service stopped is marked `interrupted` on the next start and can be retried.
+   Processing a draft again skips items with a ready or active job in that draft and queues only
+   remaining items. If all included items are ready or active, it returns an empty job list.
+   A new draft can still process a new revision of the same track; active jobs in another draft
+   continue to block duplicate processing of that track.
 4. **Review.** Each `ready` job shows the normalized result:
    - a playable preview;
    - the measured loudness (integrated LUFS, LRA, true peak) and the duration;
@@ -289,13 +293,19 @@ State and destination must be separate directory trees. Exclusive directory lock
 concurrent service processes from sharing either one. Saved drafts, jobs and review decisions
 are in `drafts.json`, `jobs.json` and `review.json`; each transition is flushed and atomically
 replaced under the process lock before applying a worker transition in memory. A failed state
-write leaves the previous state and records `storage-failed`; the worker continues with later
-jobs. If even the failure state cannot be persisted, a queued job is held until restart (or cancel
-and retry). The API rejects non-UTF-8 request strings before changing state.
+write records `storage-failed`; the worker continues with later jobs. If even the failure state
+cannot be persisted, the finished attempt becomes `failed` in memory (`interrupted` during stop),
+so it can be retried through the normal job control once storage recovers. The next successful
+jobs write persists this state too; a restart recovers stale running state from disk as interrupted.
+The API rejects non-UTF-8 request strings before changing state.
 
 SIGTERM, SIGHUP and Ctrl-C stop the HTTP server and cancel processing before waiting for idle
 HTTP connections. Media subprocesses run in separate sessions and are terminated, then killed
 if needed, and reaped. A job stopped during processing becomes `interrupted` and can be retried.
+Cancellation is requested before waiting for the HTTP serving loop; directory locks remain held
+until request threads and the worker finish. A media child that exits by signal (or ffmpeg's signal
+exit code 255) waits up to one second for concurrent service cancellation before reporting failure.
+An inherited ignored SIGHUP stays ignored, preserving `nohup` behaviour.
 Abrupt termination is recovered on the next start. A destination containing a manifest must have the matching
 service-written snapshot record and history, and must pass asset validation at startup.
 `DREMLA_COLLECTION_PROCESSOR=ffmpeg` uses the real normalization. The fixture URLs listed on the

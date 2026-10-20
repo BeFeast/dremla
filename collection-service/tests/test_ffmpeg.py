@@ -4,12 +4,12 @@ import shutil
 import threading
 import subprocess
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import wave
 
 from dremla_collection.adapters import FixtureAcquisition, pcm_bytes, pcm_samples
-from dremla_collection.common import Cancelled
-from dremla_collection.ffmpeg import FFmpegProcessor, analyze, decide, duration, ff, summary
+from dremla_collection.common import Cancelled, ServiceError
+from dremla_collection.ffmpeg import FFmpegProcessor, analyze, decide, duration, ff, run, summary
 from dremla_collection.fixtures import catalogue_item
 from support import ServiceCase
 import unittest
@@ -25,6 +25,35 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(len(decide(dict(base, lra=12.1, max_st=-13.9))[0]), 2)
         self.assertEqual(decide(dict(base, lra=8, max_st=-18, head_m=-30.1, tail_m=-30.1,
                                      longest_mid_silence_s=7.9, duration=300)), ([], []))
+
+
+class MediaExitTests(unittest.TestCase):
+    def test_signal_exit_waits_for_concurrent_service_cancellation(self):
+        for code in (-15, 255):
+            with self.subTest(returncode=code):
+                event = threading.Event()
+                child = MagicMock(returncode=code)
+                child.poll.return_value = code
+                timer = threading.Timer(0.05, event.set)
+                timer.start()
+                try:
+                    with patch("dremla_collection.ffmpeg.subprocess.Popen", return_value=child):
+                        with self.assertRaises(Cancelled):
+                            run(["fixture-media-tool"], event)
+                    child.terminate.assert_not_called()
+                finally:
+                    timer.cancel()
+                    timer.join()
+
+    def test_signal_exit_without_service_stop_remains_a_failure(self):
+        for code in (-15, 255, 1):
+            with self.subTest(returncode=code):
+                child = MagicMock(returncode=code)
+                child.poll.return_value = code
+                with patch("dremla_collection.ffmpeg.subprocess.Popen", return_value=child):
+                    with self.assertRaises(ServiceError) as raised:
+                        run(["fixture-media-tool"], threading.Event())
+                self.assertEqual(raised.exception.code, "processing-failed")
 
 
 @unittest.skipUnless(shutil.which("ffmpeg"), "SKIPPED (no ffmpeg)")
