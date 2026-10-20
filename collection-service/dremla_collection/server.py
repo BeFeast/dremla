@@ -8,6 +8,7 @@ import shutil
 import signal
 import threading
 import sys
+import time
 from urllib.parse import unquote, urlsplit
 
 from .adapters import FixtureAcquisition, FixtureProcessor
@@ -189,14 +190,20 @@ def main():
         raise ServiceError("invalid-base", "Cannot start: invalid collection/state, unavailable directory, or directory already in use.") from None
     try:
         with CollectionHTTPServer(service, int(port)) as server:
-            stop = threading.Event()
-            previous = {sig: signal.signal(sig, lambda *_: stop.set())
+            # The handler only records the signal: it must not take a lock the interrupted main
+            # thread may hold (threading.Event.set would).
+            stop = []
+            previous = {sig: signal.signal(sig, lambda signum, _frame: stop.append(signum))
                         for sig in (signal.SIGTERM, signal.SIGHUP)}
             thread = threading.Thread(target=server.serve_forever)
             thread.start()
             print(f"Dremla collection: http://127.0.0.1:{server.server_port}/", flush=True)
             try:
-                stop.wait()
+                # CPython runs signal handlers only on the main thread, but the kernel may deliver
+                # a process-directed SIGTERM/SIGHUP to any thread. An untimed wait would then never
+                # wake to run the handler (#53), so poll in short sleeps.
+                while not stop:
+                    time.sleep(0.2)
             except KeyboardInterrupt:
                 pass
             finally:

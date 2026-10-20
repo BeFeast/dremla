@@ -1,4 +1,5 @@
 """Signal the real entrypoint while it owns a long-running real ffmpeg child."""
+import ctypes
 import http.client
 import json
 import os
@@ -67,11 +68,13 @@ class ShutdownTests(ServiceCase):
         except subprocess.TimeoutExpired:
             elapsed = time.monotonic() - started
             tree = children(process.pid)
-            try:
-                os.kill(child, 0)
-                child_state = "alive"
-            except ProcessLookupError:
-                child_state = "gone"
+            child_state = "n/a"
+            if child is not None:
+                try:
+                    os.kill(child, 0)
+                    child_state = "alive"
+                except ProcessLookupError:
+                    child_state = "gone"
             self.stop(process)
             self.fail(f"entrypoint did not exit {elapsed:.1f} s after the signal "
                       f"(grace {STOP_GRACE_S} s); ffmpeg child {child} {child_state}; children: {tree}")
@@ -87,6 +90,33 @@ class ShutdownTests(ServiceCase):
             return result
         finally:
             conn.close()
+
+    @unittest.skipUnless(hasattr(ctypes.CDLL(None), "tgkill") and Path("/proc/self/task").is_dir(),
+                         "needs Linux tgkill")
+    def test_signal_delivered_to_any_thread_stops_the_service(self):
+        """A process-directed signal can land on any thread; the service must still stop (#53)."""
+        libc = ctypes.CDLL(None, use_errno=True)
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            for position in (0, -1):
+                with self.subTest(signal=sig, thread=position):
+                    work = self.root / f"tgkill-{sig.name}-{position}"
+                    env = dict(os.environ, DREMLA_COLLECTION_DATA=str(work / "state"),
+                               DREMLA_COLLECTION_DEST=str(work / "dest"),
+                               DREMLA_CATALOG_DEST=str(work / "catalog"), DREMLA_COLLECTION_PORT="0")
+                    process = self.start(env)
+                    try:
+                        threads = sorted(int(t) for t in os.listdir(f"/proc/{process.pid}/task")
+                                         if int(t) != process.pid)
+                        self.assertTrue(threads, "service has no worker or server thread")
+                        target = threads[position]
+                        # Let the main thread settle into its wait, so delivery to another thread
+                        # exercises the wake-up path rather than racing the startup.
+                        time.sleep(0.5)
+                        self.assertEqual(libc.tgkill(process.pid, target, int(sig)), 0)
+                        started = time.monotonic()
+                        self.assertEqual(self.wait_stopped(process, None, started), 0)
+                    finally:
+                        self.stop(process)
 
     def test_signals_stop_child_and_preserve_retriable_interrupted_job(self):
         for sig in (signal.SIGTERM, signal.SIGHUP):
