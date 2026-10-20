@@ -184,7 +184,8 @@ class StartupTests(ServiceCase):
     def run_entrypoint(self, **env):
         root = Path(__file__).resolve().parents[2]
         environment = dict(os.environ, DREMLA_COLLECTION_DATA=str(self.root / "other-state"),
-                           DREMLA_COLLECTION_DEST=str(self.root / "other-dest"), **env)
+                           DREMLA_COLLECTION_DEST=str(self.root / "other-dest"),
+                           DREMLA_CATALOG_DEST=str(self.root / "other-catalog"), **env)
         return subprocess.run(["bash", str(root / "scripts/collection-service.sh")], env=environment,
                               capture_output=True, text=True, timeout=10)
 

@@ -16,6 +16,23 @@ from dremla_collection.common import read_json
 from dremla_collection.fixtures import SINGLE
 from support import ServiceCase
 
+# The documented stop grace (docs/collection-service.md: "Allow at least 20 seconds to stop").
+STOP_GRACE_S = 20
+
+
+def children(pid):
+    """Direct children as 'pid comm state' strings, for failure diagnostics."""
+    found = []
+    for stat in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            fields = stat.read_text().rsplit(")", 1)
+            comm, rest = fields[0].split("(", 1)[1], fields[1].split()
+        except (OSError, IndexError):
+            continue
+        if int(rest[1]) == pid:
+            found.append(f"{stat.parent.name} {comm} {rest[0]}")
+    return found
+
 
 @unittest.skipUnless(shutil.which("ffmpeg"), "SKIPPED (no ffmpeg)")
 class ShutdownTests(ServiceCase):
@@ -40,7 +57,24 @@ class ShutdownTests(ServiceCase):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-        process.stdout.close()
+        if not process.stdout.closed:
+            process.stdout.close()
+
+    def wait_stopped(self, process, child, started):
+        """Wait up to the documented grace; on timeout report what was still running, then fail."""
+        try:
+            return process.wait(timeout=STOP_GRACE_S)
+        except subprocess.TimeoutExpired:
+            elapsed = time.monotonic() - started
+            tree = children(process.pid)
+            try:
+                os.kill(child, 0)
+                child_state = "alive"
+            except ProcessLookupError:
+                child_state = "gone"
+            self.stop(process)
+            self.fail(f"entrypoint did not exit {elapsed:.1f} s after the signal "
+                      f"(grace {STOP_GRACE_S} s); ffmpeg child {child} {child_state}; children: {tree}")
 
     def request(self, method, path, body=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
@@ -69,25 +103,29 @@ class ShutdownTests(ServiceCase):
                                    " -nostdin -re -f lavfi -i sine=frequency=220 -t 120 -f null -\nfi\n"
                                    "exec " + shlex.quote(shutil.which("ffmpeg")) + ' "$@"\n')
                 wrapper.chmod(0o755)
+                # Each run owns all three locked directories; the catalog default is shared
+                # (repo-relative), so a slow exit would otherwise block the next start.
                 env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"],
                            DREMLA_COLLECTION_DATA=str(work / "state"),
-                           DREMLA_COLLECTION_DEST=str(work / "dest"), DREMLA_COLLECTION_PORT="0",
+                           DREMLA_COLLECTION_DEST=str(work / "dest"),
+                           DREMLA_CATALOG_DEST=str(work / "catalog"), DREMLA_COLLECTION_PORT="0",
                            DREMLA_COLLECTION_ACQUISITION="fixture", DREMLA_COLLECTION_PROCESSOR="ffmpeg")
                 process = self.start(env)
-                draft = self.request("POST", "drafts", {"url": SINGLE})
-                job = self.request("POST", f"drafts/{draft['id']}/process", {})[0]
-                deadline = time.monotonic() + 10
-                while not marker.exists() and time.monotonic() < deadline:
-                    time.sleep(0.02)
-                self.assertTrue(marker.exists(), "No ffmpeg child started")
-                child = int(marker.read_text())
+                restarted = child = None
                 try:
+                    draft = self.request("POST", "drafts", {"url": SINGLE})
+                    job = self.request("POST", f"drafts/{draft['id']}/process", {})[0]
+                    deadline = time.monotonic() + 10
+                    while not marker.exists() and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                    self.assertTrue(marker.exists(), "No ffmpeg child started")
+                    child = int(marker.read_text())
                     # An idle browser connection must not delay cancellation or exit.
                     with socket.create_connection(("127.0.0.1", self.port), timeout=5):
                         started = time.monotonic()
                         process.send_signal(sig)
-                        self.assertEqual(process.wait(timeout=9), 0)
-                        self.assertLess(time.monotonic() - started, 10)
+                        self.assertEqual(self.wait_stopped(process, child, started), 0)
+                        self.assertLess(time.monotonic() - started, STOP_GRACE_S)
                     with self.assertRaises(ProcessLookupError):
                         os.kill(child, 0)
                     saved = read_json(work / "state/jobs.json")[job["id"]]
@@ -104,7 +142,12 @@ class ShutdownTests(ServiceCase):
                     self.assertEqual((result["state"], result["attempt"]), ("ready", 2))
                     self.stop(restarted)
                 finally:
-                    try:
-                        os.kill(child, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+                    # Stop this run's processes before the next subtest starts, also after a failure.
+                    if restarted is not None:
+                        self.stop(restarted)
+                    self.stop(process)
+                    if child is not None:
+                        try:
+                            os.kill(child, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
