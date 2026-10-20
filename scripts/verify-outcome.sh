@@ -133,6 +133,7 @@ run_stage "privacy-self-test" scripts/test-privacy.sh
 run_stage "privacy" scripts/check-privacy.sh
 run_stage "signing-self-test" scripts/test-signing.sh
 run_stage "collection-service-self-test" scripts/test-collection-service.sh
+run_stage "catalog-contract" scripts/check-catalog-contract.sh
 run_stage "device-self-test" scripts/test-device.sh
 run_stage "release-lock-self-test" scripts/test-release-lock.sh
 run_stage "release-lock" scripts/check-release-lock.sh

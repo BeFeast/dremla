@@ -129,3 +129,13 @@ identity field of the lock with the asset, so a lock check needs the forge to be
 the first release, an absent lock passes explicitly as `no release lock yet`. Python 3 is
 required. See [release.md](release.md) for the manual release workflow, the explicit
 `DREMLA_VERSION_CODE` / `DREMLA_VERSION_NAME` hook and the follow-up lock PR.
+
+## Catalog contract vectors
+
+`verify-outcome.sh` also runs `scripts/check-catalog-contract.sh`, which calls `contracts/check-catalog.py` (stage `catalog-contract`, both scopes). It checks the platform-neutral `dremla.catalog/1` and online-playback vectors in `contracts/fixtures/`:
+
+- valid catalogs pass;
+- every file in `invalid/` is rejected (media or credential fields, free-form URLs, bad playlists, empty selection);
+- the expected selections are recomputed, and the `playback-*.json` event sequences are replayed through a reference state machine of the online failure semantics.
+
+The checker uses only the standard library and needs no network. See [collection-client-contract.md](collection-client-contract.md).

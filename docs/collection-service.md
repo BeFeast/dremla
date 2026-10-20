@@ -1,5 +1,7 @@
 # Collection service (issue #43, first slice)
 
+> **Direction update, 2026-10-20.** The server is catalog and playlist management only. YouTube acquisition, audio and previews stay on the client. See [collection-client-contract.md](collection-client-contract.md). The fixture service below remains the reference for normalization, previews, versioned snapshots and review; it is not the path for real YouTube material.
+
 A host-only web tool for one household collection. It turns a track or playlist URL into a
 reviewed, versioned collection snapshot in the manifest format the TV app already downloads
 ([collection.md](collection.md)). The first slice runs end to end on fixtures. Live audio

@@ -1,0 +1,45 @@
+{
+  "schema": "dremla.catalog/1",
+  "version": 1,
+  "generated": "2026-10-20T18:00:00Z",
+  "tracks": [
+    {
+      "id": "yt-fxAmbient01",
+      "source": {
+        "kind": "youtube",
+        "videoId": "fxAmbient01",
+        "url": "https://www.youtube.com/watch?v=fxAmbient01"
+      },
+      "title": "Still Lantern",
+      "artist": "Fixture Ensemble",
+      "category": "ambient",
+      "durationSec": 90
+    },
+    {
+      "id": "yt-fxPiano0001",
+      "source": {
+        "kind": "youtube",
+        "videoId": "fxPiano0001",
+        "url": "https://www.youtube.com/watch?v=fxPiano0001"
+      },
+      "title": "Paper Moonlight",
+      "artist": "Fixture Ensemble",
+      "category": "piano",
+      "durationSec": 90,
+      "gainDb": -3.0
+    }
+  ],
+  "playlists": [
+    {
+      "id": "night",
+      "title": "Night",
+      "trackIds": [
+        "yt-fxAmbient01",
+        "yt-fxPiano0001",
+        "yt-fxAmbient01"
+      ]
+    }
+  ],
+  "excluded": [],
+  "active": "night"
+}
