@@ -326,9 +326,11 @@ and reaps orphaned children. The packaging gate also verifies the Python PID-1 p
 `python3 -I /app/collection-service/run.py`, and `STOPSIGNAL` is SIGTERM. Allow at least 20 seconds
 to stop before forcing termination. Interrupted jobs remain available for retry after restart.
 
-Mount two separate writable directories or volumes, owned by UID/GID `1000:1000`, at `/data/state`
-and `/data/published`. These are the defaults of `DREMLA_COLLECTION_DATA` and
-`DREMLA_COLLECTION_DEST`. Defaults also set `DREMLA_COLLECTION_ACQUISITION=fixture`,
+Mount separate writable directories or volumes, owned by UID/GID `1000:1000`, at `/data/state`
+and `/data/published`, and at `/data/catalog` when publishing catalogs. These are the defaults of
+`DREMLA_COLLECTION_DATA`, `DREMLA_COLLECTION_DEST` and `DREMLA_CATALOG_DEST`. The empty catalog
+directory is included in the image, so the fixture media flow can still start with just its two
+existing mounts. Defaults also set `DREMLA_COLLECTION_ACQUISITION=fixture`,
 `DREMLA_COLLECTION_PROCESSOR=ffmpeg`, `DREMLA_COLLECTION_PORT=8765`, `TMPDIR=/tmp` and
 `PYTHONDONTWRITEBYTECODE=1`. Media scratch goes to the tmpfs; state and output go to the mounts.
 The service still binds only to loopback **inside its container**. Publishing a Docker port does
@@ -343,8 +345,11 @@ removes a unique local image and also checks missing/malformed revision rejectio
 It checks provenance and runtime contents, runs the existing ffmpeg
 smoke (versions 1 → 2 → 3 rollback and −24 ± 1 LUFS), and checks HTTP health, active-processing
 shutdown, interruption recovery and retry both with and without init. It prints exit codes and
-stop timings, verifies no application root writes (allowing Docker's injected init mountpoint),
-and removes its containers and volumes. Self-build mode also removes its image and isolated
+stop timings and verifies no application root writes (allowing Docker's injected init mountpoint).
+Then, in a separate read-only container with a third writable volume at `/data/catalog`, it
+publishes catalog version 1, restarts, checks that the draft edit and version 1 persisted, publishes
+version 2 and checks version 1 is byte-for-byte unchanged. The media-only modes keep only their two
+mounts. The gate removes its containers and volumes, including the catalog volume. Self-build mode also removes its image and isolated
 build cache. It needs Docker with Buildx, Python 3, git and `setsid`. TERM is forwarded to the
 host driver and its clients before cleanup. CI bounds the gate at 25 minutes (TERM, then KILL
 after 60 seconds), inside a 30-minute step, and an `always()` step removes leftover containers
@@ -375,3 +380,93 @@ Each of these needs its own decision or issue:
 - segmenting long mixes;
 - machine QA classifiers and the piano leveler;
 - any TV app change, including automatic refresh.
+
+## Catalog management (#48)
+
+`/catalog` is the separate catalog and playlist page, linked from the collection header. It starts
+empty. Add a fixture track (its metadata is prefilled) or a single-track YouTube URL with manual
+`title`, `artist`, positive integer `durationSec` and `category` (`ambient` or `piano`). The same URL
+parser and canonical `yt-<videoId>` identity rules apply. Only playlists known to the fixture
+catalogue can be imported; other playlist URLs return `unsupported-url`. Imports are atomic:
+any already-present track returns `track-exists` without adding the rest of a fixture playlist.
+No acquisition adapter is called. Catalog tracks contain references and metadata only, with no
+media, previews, resolved streams, credentials or session data. The existing fixture media flow
+is unchanged and has independent drafts and versions.
+
+Edit metadata and the optional manual `gainDb` trim (−40 through 0 dB), create and rename playlists,
+add/remove tracks and reorder with Up/Down. Exclude removes a track from the effective selection of
+every playlist. Removing a track also removes its playlist memberships and exclusion. Deleting the
+active playlist clears `active`. Empty drafts, empty playlists and a null active playlist can be
+saved; publishing requires an active playlist with at least one non-excluded track. Draft validation
+explains the first blocking error. The publish confirmation shows the ordered selection and is
+bound to the draft revision on screen: if another tab or client changed the draft since that view,
+publishing returns `stale-draft`, the page reloads the current draft, and the operator reviews it
+and publishes again. The revision is a SHA-256 of the draft content, so this is a confirmation check,
+not a lock on edits.
+
+| Method and path | Body / result |
+| --- | --- |
+| `GET /api/catalog` | `{draft, draftRevision, currentVersion, selection, validation: {valid, errors}, pending, fixtures}`; `pending` is `null` or the interrupted next version (`version, generated, sha256, counts, selection: [{id, title}], matchesDraft, document`); fixtures contain reference-only metadata for form prefill |
+| `POST /api/catalog/tracks` | `{url, title?, artist?, durationSec?, category?, gainDb?}`; non-fixtures require all four metadata fields |
+| `PATCH /api/catalog/tracks/<id>` | any metadata fields above, without `url`; `gainDb: null` clears the trim |
+| `DELETE /api/catalog/tracks/<id>` | `{}`; removes memberships and exclusions too |
+| `POST /api/catalog/playlists` | `{id, title, trackIds?}`; ID is a lowercase alphanumeric/hyphen slug, 1–64 characters, beginning with an alphanumeric |
+| `PATCH /api/catalog/playlists/<id>` | `{title?, trackIds?}`; ordered known IDs, no duplicates |
+| `DELETE /api/catalog/playlists/<id>` | `{}` |
+| `PUT /api/catalog/excluded` | `{excluded: [trackId, ...]}` replaces the exclusion list; known IDs, no duplicates |
+| `PUT /api/catalog/active` | `{active: playlistId}` or `{active: null}` |
+| `POST /api/catalog/publish` | `{parentVersion, draftRevision, confirm: true}`; `draftRevision` from the reviewed view; returns the published document |
+| `POST /api/catalog/pending/complete` | `{sha256, confirm: true}`; makes the reviewed interrupted version current, byte for byte; returns it |
+| `GET /api/catalog/versions` | committed history, oldest first |
+| `GET /catalog/current.json`, `GET /catalog/v<N>.json` | `application/json` exports; unpublished or interrupted versions return 404 |
+
+Draft mutations return the same view as `GET /api/catalog`. All routes use the existing loopback
+Host guard. All writes, including DELETE, require a JSON object and `X-Dremla-Request: 1`.
+Unexpected fields are refused. Fixed error codes include `invalid-request`, `invalid-url`,
+`unsupported-url`, `metadata-required`, `track-exists`, `playlist-exists`, `not-found`,
+`invalid-catalog`, `storage-failed`, `confirmation-required`, `stale-parent`, `stale-draft`,
+`pending-publication` and `stale-pending`.
+Duplicate identities and publication conflicts return 409. No raw storage diagnostics are returned.
+
+Set `DREMLA_CATALOG_DEST` for the export directory. Its default is the gitignored
+`.collection-service/catalog`. It must be a separate directory tree from both
+`DREMLA_COLLECTION_DATA` and `DREMLA_COLLECTION_DEST`; none may contain another. All three directories
+are exclusively locked across service processes, and catalog operations use the service process
+lock. A failed draft write leaves the previous draft in memory and on disk. The draft is stored in
+`catalog-draft.json` in the state directory. Existing draft and publication files must not be
+symlinks. When embedding `CollectionService`, `catalog_destination` is optional and defaults to a
+`catalog` sibling of the supplied state directory.
+
+```text
+<state>/catalog-draft.json       tracks, playlists, excluded, active
+<catalog-dest>/v<N>.json         immutable dremla.catalog/1 document
+<catalog-dest>/index.json        version, generated, sha256, counts, parent
+<catalog-dest>/current.json      complete current document, written LAST
+```
+
+Publish validates the document with the runtime contract validator, increments the current version
+(starting at 1), and uses a UTC `generated` time ending in `Z`. Writes use flushed temporary files
+and atomic rename: immutable version, then history, then current. History counts tracks, playlists
+and selected tracks. A failure before the last step leaves the previous current document intact.
+If a publish stops after writing `v<N+1>.json` but before `current.json`, version N stays current
+and history and export endpoints keep hiding the interrupted record. `GET /api/catalog` reports it
+as `pending`, and the page shows an "Interrupted publication" panel with its time, counts, ordered
+selection and the full stored document, also after a restart and after later draft edits. A normal publish then returns
+`pending-publication`; the record is never rewritten, removed or reused implicitly, even if the draft
+still matches it. The operator reviews the panel and confirms "Make version N+1 current", which sends
+the record's SHA-256 (`stale-pending` if it no longer matches) and writes history, then current, from
+the stored bytes without reading the draft. Later draft edits are kept and publish as N+2. Startup
+checks the current record, committed history hashes and any interrupted record. No published version
+is overwritten or removed.
+
+For catalog publishing in a read-only container, supply a third separate writable mount at the
+image default `/data/catalog` (or set `DREMLA_CATALOG_DEST` to another separately mounted container
+path). The empty image directory permits media-only startup without this mount. This is
+configuration for a future deployment, not a change to any running service.
+
+The collection-service test suite includes catalog CRUD, URL/manual-metadata gates, cascades,
+ordered selection, all catalog contract fixtures, publication failures before current commits,
+interrupted-publication review and completion after draft edits and restart, stale-draft refusal for
+a second tab, directory locks, concurrent publish, and real HTTP requests on ephemeral loopback
+ports. Catalog exports are also checked by the independent contract checker. No YouTube requests
+are made by these tests or by the catalog feature.

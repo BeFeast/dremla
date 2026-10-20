@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dremla · Catalog</title><link rel="stylesheet" href="/app.css"><script defer src="/catalog.js"></script></head>
+<body class="catalog">
+<header><p class="eyebrow">DREMLA · CATALOG</p><h1>Music for the night</h1><p>Keep track references, arrange playlists and publish a catalog.</p><nav><a href="/">Fixture collection</a></nav></header>
+<main>
+<p id="error" role="alert" hidden></p>
+<section><h2>Add a track</h2><p>Paste a single-track URL and enter its details. Known fixtures fill the details automatically; fixture playlists can also be imported.</p>
+<form id="add"><label>Track or fixture playlist URL <input id="url" type="url" required placeholder="https://www.youtube.com/watch?v=fxAmbient01"></label>
+<label>Title <input id="title" type="text"></label><label>Artist <input id="artist" type="text"></label>
+<label>Duration in seconds <input id="duration" type="number" min="1" step="1"></label>
+<label>Category <select id="category"><option value="ambient">Ambient</option><option value="piano">Piano</option></select></label>
+<label>Manual gain in dB (optional) <input id="gain" type="number" min="-40" max="0" step="any" placeholder="No trim"></label><button>Add track</button></form>
+<details><summary>Offline fixtures</summary><div id="fixtures"></div><p>Playlist: <code>https://www.youtube.com/playlist?list=PLFixtureCalm01</code></p></details></section>
+<section><h2>Tracks</h2><p>Exclude marks a track as “never again” across all playlists.</p><div id="tracks"></div></section>
+<section><h2>Playlists</h2><form id="add-playlist"><label>Playlist ID <input id="playlist-id" type="text" pattern="[a-z0-9][a-z0-9\-]{0,63}" required placeholder="night"></label><label>Title <input id="playlist-title" type="text" required></label><button>Create playlist</button></form><div id="playlists"></div></section>
+<section id="pending" hidden><h2>Interrupted publication</h2><p id="pending-summary"></p><h3>Selected tracks, in order</h3><ol id="pending-selection"></ol><details><summary>Stored document</summary><pre id="pending-document"></pre></details><button id="complete-pending" type="button"></button></section>
+<section><h2>Review &amp; publish</h2><label>Active playlist <select id="active"></select></label><div id="validation" role="status"></div><h3>Selected tracks, in order</h3><ol id="selection"></ol><button id="publish" disabled>Publish catalog</button><button id="refresh" type="button" class="secondary">Refresh</button></section>
+<section><h2>History</h2><div id="history"></div></section>
+</main><footer>Track references and manual metadata · Playback belongs to the client</footer>
+</body></html>

@@ -22,13 +22,13 @@ stage=build
 cleanup() {
   local rc=$? failed=0 mode kind
   trap - EXIT
-  for mode in smoke init bare; do
+  for mode in smoke init bare catalog; do
     for kind in service setup; do
       if docker container inspect "$prefix-$mode-$kind" >/dev/null 2>&1; then
         docker rm -f "$prefix-$mode-$kind" >/dev/null || failed=1
       fi
     done
-    for kind in state published; do
+    for kind in state published catalog; do
       if docker volume inspect "$prefix-$mode-$kind" >/dev/null 2>&1; then
         docker volume rm "$prefix-$mode-$kind" >/dev/null || failed=1
       fi

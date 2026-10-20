@@ -9,8 +9,8 @@ RUN test "${#DREMLA_REVISION}" -eq 40 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /data/state /data/published \
-    && chown 1000:1000 /data/state /data/published
+    && mkdir -p /data/state /data/published /data/catalog \
+    && chown 1000:1000 /data/state /data/published /data/catalog
 
 LABEL org.opencontainers.image.revision=$DREMLA_REVISION \
       org.opencontainers.image.source="https://git.oklabs.uk/BeFeast/dremla" \
@@ -22,6 +22,7 @@ COPY dremla_collection/ /app/collection-service/dremla_collection/
 
 ENV DREMLA_COLLECTION_DATA=/data/state \
     DREMLA_COLLECTION_DEST=/data/published \
+    DREMLA_CATALOG_DEST=/data/catalog \
     DREMLA_COLLECTION_ACQUISITION=fixture \
     DREMLA_COLLECTION_PROCESSOR=ffmpeg \
     DREMLA_COLLECTION_PORT=8765 \

@@ -25,23 +25,24 @@ def inside(name, code, *args, timeout=30):
     return docker("exec", name, "python3", "-I", "-c", code, *args, timeout=timeout).stdout.strip()
 
 
-def data_mounts(mode):
+def data_mounts(mode, parts):
     mounts = []
-    for part in ("state", "published"):
+    for part in parts:
         volume = f"{PREFIX}-{mode}-{part}"
         docker("volume", "create", "--label", f"dremla.image-test={PREFIX}", volume)
         mounts += ["--mount", f"type=volume,src={volume},dst=/data/{part}"]
     docker("run", "--name", f"{PREFIX}-{mode}-setup", "--network", "none", "--read-only",
            "--label", f"dremla.image-test={PREFIX}", "--cpu-shares", "2", "--cpus", "2",
-           "--user", "0:0", *mounts, IMAGE, "chown", "1000:1000", "/data/state", "/data/published")
+           "--user", "0:0", *mounts, IMAGE, "chown", "1000:1000", *(f"/data/{part}" for part in parts))
     docker("rm", f"{PREFIX}-{mode}-setup")
     return mounts
 
 
-def run_flags(mode):
+def run_flags(mode, parts=("state", "published")):
+    # Media-only modes keep the two original mounts; catalog publishing adds /data/catalog.
     return ["--name", f"{PREFIX}-{mode}-service", "--read-only", "--tmpfs", "/tmp",
             "--user", "1000:1000", "--network", "none", "--cpus", "2", "--cpu-shares", "2",
-            "--label", f"dremla.image-test={PREFIX}", *data_mounts(mode)]
+            "--label", f"dremla.image-test={PREFIX}", *data_mounts(mode, parts)]
 
 
 HTTP = '''
@@ -173,6 +174,48 @@ while any(j["state"] in ("queued", "acquiring", "processing") for j in request("
     print(f"PASS restart/retry ({mode}): interrupted -> ready; no media children; no application root writes", flush=True)
 
 
+def catalog_persistence():
+    """Catalog publishing with its third writable mount, across a container restart."""
+    name = f"{PREFIX}-catalog-service"
+    docker("run", "-d", "--init", *run_flags("catalog", ("state", "published", "catalog")), IMAGE)
+    health(name)
+    first = json.loads(inside(name, HTTP + '''
+request("POST", "/api/catalog/tracks", {"url": "https://www.youtube.com/watch?v=fxAmbient01"})
+request("POST", "/api/catalog/playlists", {"id": "night", "title": "Night", "trackIds": ["yt-fxAmbient01"]})
+view = request("PUT", "/api/catalog/active", {"active": "night"})
+document = request("POST", "/api/catalog/publish", {"parentVersion": 0, "confirm": True,
+                                                    "draftRevision": view["draftRevision"]})
+request("PATCH", "/api/catalog/tracks/yt-fxAmbient01", {"title": "Edited before restart"})
+print(json.dumps(document))
+'''))
+    assert first["version"] == 1, first
+    docker("stop", "-t", "20", name, timeout=25)
+    docker("start", name)
+    health(name)
+    inside(name, HTTP + '''
+from pathlib import Path
+first = json.loads(sys.argv[1])
+view = request("GET", "/api/catalog")
+assert view["currentVersion"] == 1 and view["pending"] is None, view
+assert view["draft"]["tracks"][0]["title"] == "Edited before restart", view["draft"]
+assert json.loads(request("GET", "/catalog/current.json")) == first
+v1 = Path("/data/catalog/v1.json").read_bytes()
+second = request("POST", "/api/catalog/publish", {"parentVersion": 1, "confirm": True,
+                                                  "draftRevision": view["draftRevision"]})
+assert second["version"] == 2 and second["tracks"][0]["title"] == "Edited before restart", second
+assert json.loads(request("GET", "/catalog/current.json")) == second
+assert json.loads(request("GET", "/catalog/v1.json")) == first
+assert Path("/data/catalog/v1.json").read_bytes() == v1
+assert [e["version"] for e in request("GET", "/api/catalog/versions")] == [1, 2]
+assert sorted(p.name for p in Path("/data/catalog").iterdir()) == ["current.json", "index.json", "v1.json", "v2.json"]
+assert Path("/data/state/catalog-draft.json").is_file()
+''', json.dumps(first))
+    root_unchanged(name)
+    docker("stop", "-t", "20", name, timeout=25)
+    print("PASS catalog persistence: third writable mount /data/catalog; v1 published, draft edit and v1 "
+          "survive restart; v2 published, v1 bytes unchanged; no application root writes", flush=True)
+
+
 def main():
     config = json.loads(docker("image", "inspect", "--format", "{{json .Config}}", IMAGE).stdout)
     assert config["Labels"]["org.opencontainers.image.revision"] == REVISION
@@ -210,6 +253,7 @@ assert tempfile.gettempdir() == "/tmp"
     print("PASS smoke: real entrypoint, fixture/ffmpeg, v1 -> v2 -> v3 rollback, -24 +/- 1 LUFS, read-only root", flush=True)
     lifecycle("init")
     lifecycle("bare")
+    catalog_persistence()
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 # Catalog server and online client playback (issue #43, contract draft v1)
 
-Status: **direction decided, contract draft.** The client platform is not decided (see
-[Open product choice](#open-product-choice)). Only the catalog fixture vectors and their checker
-exist; no client is implemented.
+Status: **direction and client platform decided, contract draft.** The client is the Dremla APK on
+the TV ([Client platform](#client-platform)). The catalog fixture vectors and their checker exist, and
+the server catalog and playlist management is implemented by #48. No client is implemented yet.
 
 ## Direction
 
@@ -159,12 +159,14 @@ This contract is an **additive** client capability:
 
 ## Next minimal slice
 
+Step 1 is implemented by #48; see [Catalog management](collection-service.md#catalog-management-48).
+
 1. **Server.** Add catalog and playlist management to the existing service: track references
    (reusing its URL validation and stable IDs), playlists, exclusions, the active playlist,
    `gainDb`, versioning and the `dremla.catalog/1` export. The server-side media pipeline is not used
    for YouTube material. The fixture preview on the service host keeps running until a reviewed
    deploy replaces it.
-2. **Client, after the platform choice.** A stream resolver behind an interface with a fixture
+2. **Client (the TV APK).** A stream resolver behind an interface with a fixture
    resolver (no network), the catalog fetch, and the failure semantics above in the existing engine.
    It is proven by the playback vectors, then by an operator check with a real account on the
    chosen client.
@@ -174,9 +176,16 @@ This contract is an **additive** client capability:
 A client-side cache or download for offline nights, and local loudness analysis to replace the
 manual `gainDb`. These are optional and never required before playback.
 
-## Open product choice
+## Client platform
 
-**Where the YouTube session and the stream resolver live: in the Dremla APK on the TV box itself, or
-in a companion on a household computer that resolves streams for the TV.** The executor's
-recommendation and the source evidence are in issue #43. The choice is Oleg's and is not made by
-this document.
+Decided by Oleg on 2026-10-20 (question `dremla-client-platform-20261020`): **the Dremla APK on the
+TV.** The TV gets and plays the stream by itself, and no computer is needed. There is no desktop
+companion, and none is a prerequisite.
+
+Still to be verified before live use:
+
+- a YouTube resolver that runs on the 32-bit Android TV target;
+- the user's sign-in on the TV.
+
+This is an architecture choice, not a permission for device tests; those need their own approval.
+The host-only resolver assessment is tracked separately.

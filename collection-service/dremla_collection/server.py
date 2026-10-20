@@ -104,9 +104,15 @@ class Handler(BaseHTTPRequestHandler):
             path = unquote(urlsplit(self.path).path)
             parts = path.strip("/").split("/")
             service = self.server.service
+            if parts[:2] == ["api", "catalog"]:
+                self.send_json(service.catalog.dispatch(self.command, parts[2:], body))
+                return
+            if self.command == "GET" and len(parts) == 2 and parts[0] == "catalog":
+                self.send_json(service.catalog.exported(parts[1]))
+                return
             if self.command == "GET":
-                if path in ("/", "/app.js", "/app.css"):
-                    self.send_file(STATIC / ("index.html" if path == "/" else path[1:]))
+                if path in ("/", "/app.js", "/app.css", "/catalog", "/catalog.js"):
+                    self.send_file(STATIC / {"/": "index.html", "/catalog": "catalog.html"}.get(path, path[1:]))
                     return
                 if parts[0] == "media":
                     self.send_file(service.media(parts[1:]))
@@ -153,7 +159,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             self.send_json({"error": "local-failure", "message": "Local storage or processing failed."}, 500)
 
-    do_GET = do_POST = do_PATCH = dispatch
+    do_GET = do_POST = do_PATCH = do_PUT = do_DELETE = dispatch
 
 
 def main():
@@ -168,9 +174,11 @@ def main():
     require(re.fullmatch(r"\d{1,5}", port) and 0 <= int(port) <= 65535, "invalid-config", "Invalid loopback port.")
     data = os.environ.get("DREMLA_COLLECTION_DATA", ".collection-service/state")
     destination = os.environ.get("DREMLA_COLLECTION_DEST", ".collection-service/published")
+    catalog_destination = os.environ.get("DREMLA_CATALOG_DEST", ".collection-service/catalog")
     try:
         service = CollectionService(data, destination, FixtureAcquisition(),
-                                    FFmpegProcessor() if processor == "ffmpeg" else FixtureProcessor())
+                                    FFmpegProcessor() if processor == "ffmpeg" else FixtureProcessor(),
+                                    catalog_destination=catalog_destination)
     except (OSError, ValueError, KeyError, TypeError):
         raise ServiceError("invalid-base", "Cannot start: invalid collection/state, unavailable directory, or directory already in use.") from None
     try:

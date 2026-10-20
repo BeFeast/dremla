@@ -7,6 +7,7 @@ import threading
 import uuid
 
 from .common import Cancelled, ServiceError, atomic_write, checkpoint, digest, json_bytes, read_json, require, require_utf8
+from .catalog import Catalog
 from .publish import FilesystemStorage
 from .urls import parse_url
 from .validate import local_path
@@ -16,18 +17,24 @@ RETRIABLE = {"failed", "cancelled", "interrupted"}
 
 
 class CollectionService:
-    def __init__(self, data, destination, acquisition, processor, start_worker=True):
+    def __init__(self, data, destination, acquisition, processor, start_worker=True, catalog_destination=None):
         self.data = Path(data).resolve()
         self.data.mkdir(parents=True, exist_ok=True)
         destination = Path(destination).resolve()
         require(self.data != destination and destination not in self.data.parents
                 and self.data not in destination.parents, "invalid-config", "State and destination must be separate directories.")
         destination.mkdir(parents=True, exist_ok=True)
+        catalog_destination = Path(catalog_destination if catalog_destination is not None else self.data.parent / "catalog").resolve()
+        for root in (self.data, destination):
+            require(root != catalog_destination and root not in catalog_destination.parents
+                    and catalog_destination not in root.parents, "invalid-config",
+                    "State, media and catalog destinations must be separate directory trees.")
+        catalog_destination.mkdir(parents=True, exist_ok=True)
         self.file_locks = []
         self.worker = None
         try:
             # Separate roots are locked across processes as well as across request threads.
-            for root in sorted([self.data, destination]):
+            for root in sorted([self.data, destination, catalog_destination]):
                 handle = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
                 self.file_locks.append(handle)
                 try:
@@ -37,6 +44,7 @@ class CollectionService:
             self.storage = FilesystemStorage(destination)
             self.acquisition, self.processor = acquisition, processor
             self.lock = threading.RLock()
+            self.catalog = Catalog(self.data, catalog_destination, self.lock)
             self.condition = threading.Condition(self.lock)
             self.stopping = threading.Event()
             self.events = {}
