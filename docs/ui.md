@@ -17,7 +17,9 @@ No second player, timer, downloader or sleep action exists in the UI.
 | Finished | Finished or closeActivity; all content suppressed, even an open menu |
 
 The engine owns blackout timing. Blackout closes an open menu and suppresses all
-content; a long OK after blackout is consumed without reopening it. Neither menu
+content. Holding OK after blackout reopens the menu over black (offline and online), because
+it is the only remote path to the timer, source and Never again; BACK closes it and the scene
+is black again. Neither menu
 activity nor timer edits reset the ten-second deadline. Completion always wins.
 A first-run retry has the same focus fill and ring as every menu item.
 

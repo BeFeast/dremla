@@ -49,8 +49,12 @@ class NightSceneTest {
         compose.onRoot().captureGolden("night-download.png")
     }
     @Test fun black() {
-        compose.setContent { NightScene(playing.copy(blackScreen = true), CollectionStatus(CollectionPhase.RefreshError), menuOpen = true) }
+        compose.setContent { NightScene(playing.copy(blackScreen = true), CollectionStatus(CollectionPhase.RefreshError)) }
         compose.onRoot().captureGolden("night-black.png")
+    }
+    @Test fun menuExplicitlyOpenedOverBlackIsShown() {
+        compose.setContent { NightScene(playing.copy(blackScreen = true), menuOpen = true) }
+        compose.onNodeWithTag("timer-90").assertIsFocused()
     }
     @Test fun finished() {
         compose.setContent { NightScene(playing.copy(phase = Phase.Finished), menuOpen = true) }

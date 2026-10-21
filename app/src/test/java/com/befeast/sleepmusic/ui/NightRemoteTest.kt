@@ -20,7 +20,7 @@ class NightRemoteTest {
     private val controls = RecordingControls().also { TestApp.graph = TestGraph(it) }
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
-    @Test fun blackoutClosesMenuAndLongOkCannotExposeContent() {
+    @Test fun blackoutClosesMenuAndLongOkReopensItOverBlack() {
         press(KeyEvent.KEYCODE_DPAD_CENTER, longPress = true)
         compose.onNodeWithTag("timer-90").assertIsFocused()
         compose.runOnIdle {
@@ -28,7 +28,14 @@ class NightRemoteTest {
                 phase = com.befeast.sleepmusic.playback.Phase.Playing)
         }
         compose.onNodeWithTag("timer-90").assertDoesNotExist()
+        compose.onRoot().captureGolden("night-black.png")
+        // Offline night after blackout: holding OK must still reach the menu (TX10, 2026-10-21),
+        // without pausing or choosing anything.
         press(KeyEvent.KEYCODE_DPAD_CENTER, longPress = true)
+        compose.onNodeWithTag("timer-90").assertIsFocused()
+        assertTrue("Opening hold over black must not pause or choose", controls.calls.isEmpty())
+        // BACK closes it; the scene is black again.
+        press(KeyEvent.KEYCODE_BACK)
         compose.onNodeWithTag("timer-90").assertDoesNotExist()
         compose.onRoot().captureGolden("night-black.png")
     }

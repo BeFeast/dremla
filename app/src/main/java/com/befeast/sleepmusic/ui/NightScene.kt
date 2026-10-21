@@ -41,7 +41,7 @@ fun NightScene(
 ) {
     val type = rememberBrandType()
     Box(Modifier.fillMaxSize().background(BrandColors.Ground)) {
-        if (session.phase == Phase.Finished || session.closeActivity || (session.blackScreen && (!session.online || !menuOpen))) return@Box
+        if (session.phase == Phase.Finished || session.closeActivity || (session.blackScreen && !menuOpen)) return@Box
         if (menuOpen) {
             NightMenu(session, status, type, onTimer, onTvOff, onRefresh, onLike, onNever, onSource)
             Hints(listOf("↑ ↓ ← →" to "move", "OK" to "choose", "BACK" to "close"), type)

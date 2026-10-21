@@ -101,7 +101,8 @@ class MainActivity : ComponentActivity() {
     /** A long press of OK cancels its release; #6 opens the menu here. */
     override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
         if (!RemoteKeyMap.consumesLongPress(keyCode)) return super.onKeyLongPress(keyCode, event)
-        if ((!controls.state.value.blackScreen || controls.state.value.online) && controls.state.value.phase != com.befeast.sleepmusic.playback.Phase.Finished) {
+        // Holding OK is the only remote path to the menu, so it also works over the night's black screen.
+        if (controls.state.value.phase != com.befeast.sleepmusic.playback.Phase.Finished) {
             menuOpen.value = true
             controls.refreshSleepRoute()
         }

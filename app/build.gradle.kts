@@ -21,6 +21,8 @@ android {
     defaultConfig {
         applicationId = "com.befeast.sleepmusic"
         minSdk = 28
+        // UI-only device checks (app/src/androidTest); never part of the shipped APK.
+        testInstrumentationRunner = "com.befeast.sleepmusic.DeviceUiTestRunner"
         targetSdk = 34
         versionCode = dremlaVersionCode
         versionName = dremlaVersionName
@@ -102,6 +104,10 @@ dependencies {
     testImplementation(libs.roborazzi.compose)
     testImplementation(libs.kotlinx.coroutines.test)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+    androidTestImplementation(composeBom)
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }
 
 tasks.withType<Test>().configureEach {
