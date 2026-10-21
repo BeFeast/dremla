@@ -16,7 +16,7 @@ async function api(path = '', method = 'GET', body) {
   return value;
 }
 // Outdated review, another tab's completion, or an interrupted write: show the server's state before a retry.
-const STALE = new Set(['stale-draft', 'stale-parent', 'stale-pending', 'pending-publication', 'not-found', 'local-failure']);
+const STALE = new Set(['stale-draft', 'stale-parent', 'stale-pending', 'pending-publication', 'stale-delivery', 'not-found', 'local-failure']);
 async function action(fn) {
   try { error(''); await fn(); await refresh(); } catch (e) {
     if (STALE.has(e.code)) await refresh().catch(() => {});
@@ -96,6 +96,26 @@ function drawPlaylists() {
     })); root.append(card);
   }
 }
+// Local publication and availability at the TV's catalog URL are separate facts; the page never merges them.
+// A delivery proves an anonymous fetch of the URL returns these bytes, not that a TV has loaded them.
+function drawDelivery() {
+  const d = state.delivery, lines = [];
+  const retry = $('retry-delivery'); retry.hidden = true;
+  if (!d || !d.configured) {
+    lines.push('Local only: Publish writes the catalog on this host. Catalog delivery is not configured.');
+  } else if (!state.currentVersion) {
+    lines.push(`Publishing will also upload the catalog to ${d.url}.`);
+  } else if (d.state === 'delivered' && d.version === state.currentVersion) {
+    lines.push(`Version ${d.version} is published here and available for the TV at ${d.url} (checked ${d.at}).`);
+    lines.push('A TV fetches it at its next online launch and uses it from the launch after that (at once if it has no catalog yet).');
+  } else {
+    lines.push(`Version ${state.currentVersion} is published here but not available for the TV at ${d.url}.`);
+    if (d.state === 'failed' && d.version === state.currentVersion) lines.push(`Last attempt ${d.at}: ${d.error}.`);
+    else if (d.state === 'delivered') lines.push(`The last check found version ${d.version} at that URL.`);
+    retry.textContent = `Retry upload of version ${state.currentVersion}`; retry.hidden = false;
+  }
+  $('delivery').replaceChildren(...lines.map(text => el('p', text)));
+}
 async function refresh() {
   state = await api(); drawTracks(); drawPlaylists();
   $('active').replaceChildren(new Option('Choose a playlist', ''));
@@ -103,6 +123,7 @@ async function refresh() {
   $('active').value = state.draft.active || '';
   $('validation').replaceChildren(...(state.validation.errors.length ? state.validation.errors : ['Ready to publish.']).map(message => el('p', message)));
   $('selection').replaceChildren(...state.selection.map(id => el('li', state.draft.tracks.find(t => t.id === id).title)));
+  drawDelivery();
   $('publish').textContent = `Publish catalog version ${state.currentVersion} → ${state.currentVersion + 1}`;
   $('publish').disabled = !state.validation.valid;
   const pending = state.pending;
@@ -162,6 +183,12 @@ $('publish').onclick = () => action(async () => {
   const selected = shown.selection.map(id => { const t = shown.draft.tracks.find(t => t.id === id); return `${t.title} (${id})`; }).join('\n');
   if (confirm(`Publish catalog version ${parent} → ${parent + 1}?\n\nSelected tracks, in order:\n${selected}`)) {
     await api('/publish', 'POST', {parentVersion: parent, draftRevision: shown.draftRevision, confirm: true});
+  }
+});
+$('retry-delivery').onclick = () => action(async () => {
+  const version = state.currentVersion;
+  if (confirm(`Upload published version ${version} to ${state.delivery.url} again?`)) {
+    await api('/delivery/retry', 'POST', {version, confirm: true});
   }
 });
 $('complete-pending').onclick = () => action(async () => {

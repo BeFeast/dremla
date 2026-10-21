@@ -17,7 +17,8 @@ RETRIABLE = {"failed", "cancelled", "interrupted"}
 
 
 class CollectionService:
-    def __init__(self, data, destination, acquisition, processor, start_worker=True, catalog_destination=None):
+    def __init__(self, data, destination, acquisition, processor, start_worker=True, catalog_destination=None,
+                 catalog_delivery=None):
         self.data = Path(data).resolve()
         self.data.mkdir(parents=True, exist_ok=True)
         destination = Path(destination).resolve()
@@ -44,7 +45,7 @@ class CollectionService:
             self.storage = FilesystemStorage(destination)
             self.acquisition, self.processor = acquisition, processor
             self.lock = threading.RLock()
-            self.catalog = Catalog(self.data, catalog_destination, self.lock)
+            self.catalog = Catalog(self.data, catalog_destination, self.lock, delivery=catalog_delivery)
             self.condition = threading.Condition(self.lock)
             self.stopping = threading.Event()
             self.events = {}

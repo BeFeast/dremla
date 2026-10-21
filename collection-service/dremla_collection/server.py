@@ -14,6 +14,7 @@ from urllib.parse import unquote, urlsplit
 from .adapters import FixtureAcquisition, FixtureProcessor
 from .common import ServiceError, json_bytes, parse_json, require, require_utf8
 from .ffmpeg import FFmpegProcessor
+from .delivery import from_environment
 from .jobs import CollectionService
 
 STATIC = Path(__file__).with_name("static")
@@ -182,10 +183,12 @@ def main():
     data = os.environ.get("DREMLA_COLLECTION_DATA", ".collection-service/state")
     destination = os.environ.get("DREMLA_COLLECTION_DEST", ".collection-service/published")
     catalog_destination = os.environ.get("DREMLA_CATALOG_DEST", ".collection-service/catalog")
+    # Optional; without both variables publishing stays local-only. Config errors are reported as such.
+    delivery = from_environment(data, os.environ)
     try:
         service = CollectionService(data, destination, FixtureAcquisition(),
                                     FFmpegProcessor() if processor == "ffmpeg" else FixtureProcessor(),
-                                    catalog_destination=catalog_destination)
+                                    catalog_destination=catalog_destination, catalog_delivery=delivery)
     except (OSError, ValueError, KeyError, TypeError):
         raise ServiceError("invalid-base", "Cannot start: invalid collection/state, unavailable directory, or directory already in use.") from None
     try:

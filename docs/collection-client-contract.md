@@ -232,6 +232,8 @@ sleep route and no-morning-restart rules still apply. `gainDb` multiplies player
 
 ### Catalog delivery proposal (future operator step; not executed)
 
+The service can now deliver on Publish when configured; see [Catalog delivery](collection-service.md#catalog-delivery-optional). Use the manual commands below only when delivery is not configured: while it is, the service must be the URL's only writer.
+
 The catalog service remains loopback-only. The operator first commits/publishes a catalog version
 in that service, reviews the export for public-safe references/metadata, then exports and uploads
 only `current.json`. Proposed commands, run with the operator's existing service address and

@@ -518,6 +518,61 @@ image default `/data/catalog` (or set `DREMLA_CATALOG_DEST` to another separatel
 path). The empty image directory permits media-only startup without this mount. This is
 configuration for a future deployment, not a change to any running service.
 
+### Catalog delivery (optional)
+
+Without configuration, Publish writes only the local files above. The service uploads a published
+catalog to the URL the TV app reads only when both variables are set:
+
+| Variable | Value |
+| --- | --- |
+| `DREMLA_CATALOG_DELIVERY_URL` | the one public catalog URL the app reads, `https://html.me.uk/t/dremla/catalog/current.json` (HTTPS, a `.json` path, no credentials or query; plain HTTP only to loopback for local test targets) |
+| `DREMLA_CATALOG_DELIVERY_TOKEN_FILE` | a server-side file holding the existing publication bearer token for that origin |
+
+Setting only one of them refuses to start (`invalid-config`). The token is read from the file for
+each upload and sent only in the PUT's `Authorization` header. It never appears in the UI, API
+responses, logs, the catalog or `catalog-delivery.json`.
+
+After a publication commits (`current.json` written last), or after an interrupted one is completed,
+the service delivers **that version**, outside the service lock. Deliveries take a delivery lock and
+run one at a time:
+
+1. Under the lock, check the version is still current. If a newer version became current, nothing is
+   sent for this one; the newer publication delivers itself.
+2. Anonymous GET of the URL. If it holds a catalog with a **higher** `version`, the delivery fails
+   with `remote-newer` and nothing is uploaded. If it already holds the same bytes, it is recorded as
+   delivered without an upload. Any status other than 200 or 404 fails (`remote-check-http-<status>`).
+3. Check again that the version is still current (the GET took network time), then PUT the exact
+   `current.json` bytes with `private: false` and `expire: never` (`upload-http-<status>` on failure).
+4. Anonymous GET again. It must return 200 and the identical bytes (`verify-http-<status>`,
+   `verify-mismatch`).
+
+`delivered` means an anonymous fetch of the URL returned these exact bytes at the recorded time. It is
+not a receipt from a TV. A TV fetches the catalog at its next online launch and uses it from the launch
+after that; only a TV with no valid catalog yet uses it at once (see the
+[client contract](collection-client-contract.md)).
+
+**The service must be the URL's only writer while delivery is configured.** GET then PUT is not a
+compare-and-swap at the origin. A manual upload or any other writer between the pre-check and the PUT
+is overwritten, and the pre-check only sees what the URL held at that moment. The delivery lock orders
+this service's own uploads, and each one sends a version that was current just before its PUT. A
+newer local publication can still commit while an older version's PUT is in flight; the newer one's
+delivery runs next and replaces it. With delivery configured, do not use the manual upload in the
+[client contract](collection-client-contract.md).
+
+Transport errors are recorded as `network`, with no detail. Redirects are not followed, and requests
+send no `User-Agent` header. Each step has a 15 s timeout. The result is stored in
+`<state>/catalog-delivery.json` (url, version, sha256, `delivered`/`failed`, error code, UTC time) and
+returned as `delivery` in `GET /api/catalog`.
+
+A failed delivery never undoes the local publication. `POST /api/catalog/delivery/retry
+{version, confirm: true}` makes one attempt for that version if it is still current, checked under
+the delivery lock, and creates no new version. Without configuration it returns 404 `not-found`. If
+the version is not current, or a newer one becomes current before the upload, it returns 409
+`stale-delivery` and uploads nothing. There is no background retry or scheduler. The page's *Catalog
+delivery* panel shows one of three states: local only (not configured); published here and available
+for the TV at the URL (version, URL, check time, and when a TV picks it up);
+or published here but not available (last error and a Retry button).
+
 The collection-service test suite includes catalog CRUD, URL/manual-metadata gates, cascades,
 ordered selection, all catalog contract fixtures, publication failures before current commits,
 interrupted-publication review and completion after draft edits and restart, stale-draft refusal for

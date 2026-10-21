@@ -109,9 +109,10 @@ def fields(body, allowed, required=()):
 
 
 class Catalog:
-    def __init__(self, data, destination, lock, failure_hook=lambda stage: None):
+    def __init__(self, data, destination, lock, failure_hook=lambda stage: None, delivery=None):
         self.data, self.root, self.lock = Path(data), Path(destination), lock
         self.failure_hook = failure_hook
+        self.delivery = delivery  # optional CatalogDelivery; None keeps publishing local-only
         self.draft_path = self.path(self.data, "catalog-draft.json")
         self.draft = validate_draft(read_json(self.draft_path)) if self.draft_path.exists() else dict(
             tracks=[], playlists=[], excluded=[], active=None)
@@ -202,7 +203,8 @@ class Catalog:
                                  "Review it and make it current before publishing newer changes.")
             return dict(draft=deepcopy(self.draft), draftRevision=revision(self.draft), currentVersion=version,
                         selection=selection(self.draft), validation=dict(valid=not errors, errors=errors),
-                        pending=pending, fixtures=[fixture_track(video) for video in CATALOGUE])
+                        pending=pending, fixtures=[fixture_track(video) for video in CATALOGUE],
+                        delivery=self.delivery.status() if self.delivery else dict(configured=False))
 
     def save(self, candidate):
         validate_draft(candidate)
@@ -335,6 +337,28 @@ class Catalog:
         atomic_write(self.path(self.root, "current.json"), encoded)
         return document
 
+    def current_record(self):
+        """(version, exact bytes) of the current published catalog, or None."""
+        with self.lock:
+            current = self.current()
+            if current is None:
+                return None
+            return current["version"], self.path(self.root, "current.json").read_bytes()
+
+    def deliver(self, version):
+        # Runs after the publication committed and outside the service lock: network time never
+        # blocks other requests, and a failed delivery never undoes the local publication.
+        # None: `version` is no longer current and nothing was sent for it.
+        if self.delivery:
+            return self.delivery.deliver(self.current_record, version)
+
+    def retry_delivery(self, version, confirm):
+        require(self.delivery is not None, "not-found", "Catalog delivery is not configured.", 404)
+        require(confirm is True, "confirmation-required", "Explicit confirmation is required.")
+        require(self.deliver(version) is not None, "stale-delivery",
+                "Only the current published version can be delivered; refresh first.", 409)
+        return self.view()
+
     def exported(self, name):
         with self.lock:
             if name == "current.json":
@@ -355,10 +379,17 @@ class Catalog:
             return self.history()
         if method == "POST" and parts == ["publish"]:
             fields(body, {"parentVersion", "confirm", "draftRevision"})
-            return self.publish(body.get("parentVersion"), body.get("confirm"), body.get("draftRevision"))
+            document = self.publish(body.get("parentVersion"), body.get("confirm"), body.get("draftRevision"))
+            self.deliver(document["version"])
+            return document
         if method == "POST" and parts == ["pending", "complete"]:
             fields(body, {"sha256", "confirm"})
-            return self.complete_pending(body.get("sha256"), body.get("confirm"))
+            document = self.complete_pending(body.get("sha256"), body.get("confirm"))
+            self.deliver(document["version"])
+            return document
+        if method == "POST" and parts == ["delivery", "retry"]:
+            fields(body, {"version", "confirm"}, {"version", "confirm"})
+            return self.retry_delivery(body.get("version"), body.get("confirm"))
         if method == "PUT" and parts in (["excluded"], ["active"]):
             fields(body, {parts[0]}, {parts[0]})
             return self.set_field(parts[0], body[parts[0]])
