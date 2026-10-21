@@ -229,8 +229,10 @@ def main():
     # Inspect the unmounted image first: tests and Android sources are absent.
     docker("run", *flags, IMAGE, "python3", "-I", "-c", '''
 from pathlib import Path
-import os, sys, tempfile
+import os, ssl, sys, tempfile
 assert Path("/app/REVISION").read_text().strip() == sys.argv[1]
+# Catalog delivery verifies HTTPS: the default context needs the system CA bundle.
+assert ssl.create_default_context().cert_store_stats()["x509_ca"] > 0
 assert {p.name for p in Path("/app").iterdir()} == {"REVISION", "collection-service"}
 assert {p.name for p in Path("/app/collection-service").iterdir()} == {"run.py", "dremla_collection"}
 assert not list(Path("/app").rglob("*.pyc"))
@@ -238,7 +240,8 @@ assert os.getuid() == 1000 and os.getgid() == 1000
 assert tempfile.gettempdir() == "/tmp"
 ''', REVISION)
     docker("rm", name)
-    print(f"PASS provenance/layout: label and /app/REVISION = {REVISION}; numeric non-root, runtime files only", flush=True)
+    print(f"PASS provenance/layout: label and /app/REVISION = {REVISION}; numeric non-root, runtime files only, "
+          "system CA bundle for HTTPS", flush=True)
     # /mnt already exists in Debian: no mountpoint creation in the image's root layer.
     output = docker("run", *flags, "--init", "--mount",
                     f"type=bind,src={TESTS},dst=/mnt,readonly",

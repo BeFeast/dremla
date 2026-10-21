@@ -360,8 +360,9 @@ both scopes.
 
 ## Container image
 
-The image packages the unchanged service, its static UI, Python 3 and ffmpeg from Debian 13
-(`trixie-slim`, pinned by digest). Its build context is `collection-service/`; tests, Android
+The image packages the unchanged service, its static UI, Python 3, ffmpeg and the system CA
+bundle (`ca-certificates`, for catalog delivery over HTTPS) from Debian 13 (`trixie-slim`, pinned
+by digest). Its build context is `collection-service/`; tests, Android
 sources and audio are excluded. Build with a full 40-hex commit SHA:
 
 ```bash

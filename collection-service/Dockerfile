@@ -7,7 +7,7 @@ RUN test "${#DREMLA_REVISION}" -eq 40 \
     && printf '%s' "$DREMLA_REVISION" | grep -Eq '^[0-9a-fA-F]{40}$' \
     && printf '%s\n' "$DREMLA_REVISION" > /app/REVISION
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 ffmpeg \
+    && apt-get install -y --no-install-recommends python3 ffmpeg ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /data/state /data/published /data/catalog \
     && chown 1000:1000 /data/state /data/published /data/catalog
