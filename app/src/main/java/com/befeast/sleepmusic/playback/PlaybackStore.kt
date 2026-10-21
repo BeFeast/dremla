@@ -23,4 +23,9 @@ interface PlaybackStore {
 
     /** Sanitised to [SleepTimer.CHOICES]; default 120. */
     var timerMinutes: Int
+
+    /** The last Clock session request handled, so a repeated request never starts a second night. */
+    var lastClockRequestId: String?
+        get() = null
+        set(@Suppress("UNUSED_PARAMETER") value) {}
 }

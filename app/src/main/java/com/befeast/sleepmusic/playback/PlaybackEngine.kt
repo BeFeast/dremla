@@ -41,9 +41,11 @@ class PlaybackEngine(
     private val sleepRoute: SleepRoute = SleepRoute.NONE,
     private val resolver: StreamResolver = NewPipeResolver(),
     private val resolverDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /** Epoch time for validating Clock's window end; timers and ramps stay on the monotonic [clock]. */
+    private val wallClock: Clock = WallClock,
 ) : PlaybackControls {
 
-    private class Session(val id: Int, val timer: SleepTimer, val startedAtMs: Long) {
+    private class Session(val id: Int, val timer: SleepTimer, val startedAtMs: Long, val clock: ClockSessionRequest? = null) {
         /** The listener's intent: the phase shows Paused. */
         var paused = false
 
@@ -89,6 +91,8 @@ class PlaybackEngine(
     private var session: Session? = null
     private var sessionCounter = 0
     private var pendingStart = false
+    /** A Clock request waiting for the collection, consumed by the next [startSession]. */
+    private var pendingClock: ClockSessionRequest? = null
     private var tickJob: Job? = null
     private var resolveJob: Job? = null
     private var lastGain = -1f
@@ -144,6 +148,7 @@ class PlaybackEngine(
     override fun onUiEntry(verdict: LaunchVerdict) {
         events.uiEntry(verdict)
         if (!verdict.isLauncherStart) return
+        pendingClock = null
         source.onLaunch()
         if (session?.night?.phase == "unavailable") finish(EndReason.Stopped)
         if (commandSession(allowDismiss = false) != null) {
@@ -174,10 +179,12 @@ class PlaybackEngine(
         setGain(0f)
         val volume = StartVolumeSequence.observe(audio)
         val now = clock.nowMs()
-        val minutes = SleepTimer.sanitize(store.timerMinutes)
+        val clockRequest = pendingClock
+        pendingClock = null
+        val minutes = clockRequest?.musicMinutes ?: SleepTimer.sanitize(store.timerMinutes)
         val first = queue.begin(eligible)
         if (first == null && !source.online) return
-        val s = Session(++sessionCounter, SleepTimer.start(now, minutes), now)
+        val s = Session(++sessionCounter, SleepTimer.start(now, minutes), now, clockRequest)
         session = s
         envelope.reset(now)
         if (source.online) {
@@ -304,7 +311,31 @@ class PlaybackEngine(
         if (session?.night != null) stop(CommandSource.System)
     }
 
-    override fun cancelPendingStart() { pendingStart = false }
+    override fun cancelPendingStart() {
+        pendingStart = false
+        pendingClock = null
+    }
+
+    override fun startClockSession(request: ClockSessionRequest): String? {
+        ClockSessions.refusal(request, wallClock.nowMs(), store.lastClockRequestId)?.let { return it }
+        if (pendingStart || commandSession(allowDismiss = false) != null) return "a night is already playing"
+        store.lastClockRequestId = request.requestId
+        source.onLaunch()
+        if (session?.night?.phase == "unavailable") finish(EndReason.Stopped)
+        mutableState.update { it.copy(phase = Phase.Idle, closeActivity = false, endReason = null) }
+        pendingClock = request
+        val collection = source.collection.value
+        if (collection == null) {
+            pendingStart = true
+            return null
+        }
+        startSession(collection)
+        return null
+    }
+
+    override fun stopClockSession(requestId: String) {
+        if (session?.clock?.requestId == requestId) finish(EndReason.Stopped)
+    }
 
     override fun stop(source: CommandSource) {
         pendingStart = false
@@ -489,7 +520,7 @@ class PlaybackEngine(
             onlineFailure = s.night?.lastFailure?.code,
             phase = Phase.Finished,
             blackScreen = true,
-            tvOff = store.tvOff,
+            tvOff = tvOffFor(s),
             sleepRouteStatus = sleepRoute.status(),
             sessionId = s.id,
             timerMinutes = store.timerMinutes,
@@ -501,6 +532,11 @@ class PlaybackEngine(
         )
         events.sessionEnded(s.id, reason)
         host.sessionEnded()
+        // A Clock night never turns the TV off: it closes, and Clock keeps the screen protected.
+        if (s.clock != null) {
+            mutableState.update { it.copy(closeActivity = allowDismiss) }
+            return
+        }
         // Only this live transition may sleep. State collection, resume and recreation cannot replay it.
         val ended = mutableState.value
         if (ended.tvOff && reason == EndReason.TimerEnded) {
@@ -613,7 +649,7 @@ class PlaybackEngine(
             onlinePhase = s.night?.phase,
             onlineFailure = s.night?.lastFailure?.code,
             phase = phase,
-            tvOff = store.tvOff,
+            tvOff = tvOffFor(s),
             sleepRouteStatus = mutableState.value.sleepRouteStatus,
             blackScreen = now - s.startedAtMs >= BLACK_AFTER_MS,
             sessionId = s.id,
@@ -627,6 +663,8 @@ class PlaybackEngine(
             timerEndAtMs = s.timer.endAtMs,
         )
     }
+
+    private fun tvOffFor(s: Session): Boolean = s.clock == null && store.tvOff
 
     private fun describe(s: Session, collection: PlayableCollection, id: String) {
         val track: Track? = collection.track(id)

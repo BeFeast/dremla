@@ -83,7 +83,8 @@ class ManifestTest {
         assertEquals("android.permission.BIND_DEVICE_ADMIN", receiver.permission)
         assertTrue(receiver.exported)
         assertTrue(receiver.metaData.getInt("android.app.device_admin") != 0)
-        assertEquals(listOf(NightAdminReceiver::class.java.name, "androidx.profileinstaller.ProfileInstallReceiver"),
+        assertEquals(listOf(com.befeast.sleepmusic.SessionCommandReceiver::class.java.name, NightAdminReceiver::class.java.name,
+                "androidx.profileinstaller.ProfileInstallReceiver"),
             MergedManifest.elements("receiver").map { it.android("name") })
     }
 

@@ -74,6 +74,15 @@ class SharedPrefsPlaybackStore(context: Context) : PlaybackStore, com.befeast.sl
             }
         }
 
+    override var lastClockRequestId: String?
+        get() = prefs.getString(KEY_CLOCK_REQUEST, null)
+        set(value) {
+            prefs.edit(commit = true) {
+                putSchema()
+                putString(KEY_CLOCK_REQUEST, value)
+            }
+        }
+
     private fun SharedPreferences.Editor.putSchema() {
         putInt(KEY_SCHEMA, SCHEMA)
     }
@@ -88,6 +97,7 @@ class SharedPrefsPlaybackStore(context: Context) : PlaybackStore, com.befeast.sl
         const val KEY_BAG_LAST = "bag_last"
         const val KEY_TV_OFF = "tv_off"
         const val KEY_TIMER = "timer_min"
+        const val KEY_CLOCK_REQUEST = "clock_request_id"
         // v0.1.0 also wrote "start_volume_level"; it is no longer read or written (#34) and stays as left.
     }
 }

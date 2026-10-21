@@ -44,4 +44,10 @@ interface PlaybackControls {
     fun refreshSleepRoute() {}
 
     fun setTimerMinutes(minutes: Int)
+
+    /** Starts a night requested by Clock; returns why it was refused, or null when it started. */
+    fun startClockSession(request: ClockSessionRequest): String? = "not supported"
+
+    /** Ends the night Clock started with [requestId]; any other session is left alone. */
+    fun stopClockSession(requestId: String) {}
 }

@@ -43,6 +43,21 @@
             </intent-filter>
         </activity>
 
+        <!-- TX10 Clock starts a night here with an explicit, result-returning Intent (mode, music
+             minutes, window end; no calendar data). No intent filter: only an explicit start reaches
+             it, the caller must be Clock, and every field is validated before anything plays. -->
+        <activity
+            android:name=".SessionEntryActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay" />
+
+        <!-- Clock's "I'm awake" while music still plays: stops only the night with that request id. -->
+        <receiver
+            android:name=".SessionCommandReceiver"
+            android:exported="true" />
+
         <!-- Exported so system controllers can bind. No MEDIA_BUTTON filter and no media button
              receiver anywhere: on API 31+ a media button cannot start a dead process. -->
         <service

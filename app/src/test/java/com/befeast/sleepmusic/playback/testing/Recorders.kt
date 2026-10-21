@@ -1,5 +1,7 @@
 package com.befeast.sleepmusic.playback.testing
 
+import com.befeast.sleepmusic.playback.ClockSessionRequest
+
 import com.befeast.sleepmusic.playback.CommandSource
 import com.befeast.sleepmusic.playback.EndReason
 import com.befeast.sleepmusic.playback.LaunchVerdict
@@ -71,6 +73,14 @@ class RecordingControls(initial: SessionState = SessionState()) : PlaybackContro
 
     override fun onUiEntry(verdict: LaunchVerdict) {
         verdicts += verdict
+    }
+
+    val clockRequests = mutableListOf<ClockSessionRequest>()
+    var clockRefusal: String? = null
+
+    override fun startClockSession(request: ClockSessionRequest): String? {
+        clockRequests += request
+        return clockRefusal
     }
 
     override fun togglePause(source: CommandSource) {

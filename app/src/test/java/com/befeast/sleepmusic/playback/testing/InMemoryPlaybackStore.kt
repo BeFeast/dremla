@@ -12,6 +12,7 @@ class InMemoryPlaybackStore : PlaybackStore {
     override fun saveOnlineBag(state: BagState) { onlineState = state }
     private var bagState = BagState()
     private var timer = SleepTimer.DEFAULT_MINUTES
+    override var lastClockRequestId: String? = null
     val bagHistory = mutableListOf<BagState>()
 
     override fun liked(): Set<String> = likedIds.toSet()

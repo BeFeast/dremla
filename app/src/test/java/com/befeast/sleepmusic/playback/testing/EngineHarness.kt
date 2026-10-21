@@ -29,10 +29,13 @@ class EngineHarness(
     /** A different port for the engine (the real ExoPlayerPort over a fake player); [port] then stays unused. */
     enginePort: PlayerPort? = null,
     sleepRoute: com.befeast.sleepmusic.playback.SleepRoute = com.befeast.sleepmusic.playback.SleepRoute.NONE,
+    /** Epoch at harness start; deliberately a different scale from the monotonic [clock]. */
+    val wallStartMs: Long = 1_792_576_800_000L,
 ) {
     val scope = CheckedTestScope()
     private var sleptMs = 0L
     val clock = Clock { scope.testScheduler.currentTime + sleptMs }
+    val wallClock = Clock { wallStartMs + scope.testScheduler.currentTime + sleptMs }
     val log = mutableListOf<String>()
     val port = FakePlayerPort(clock, log)
     val audio = FakeAudioControl(log)
@@ -46,13 +49,15 @@ class EngineHarness(
         scope.testScheduler.advanceTimeBy(startMs)
         scope.testScheduler.runCurrent()
         scope.assertHealthy()
-        engine = PlaybackEngine(scope, clock, enginePort ?: port, audio, store, source, host, events, Random(seed), sleepRoute)
+        engine = PlaybackEngine(scope, clock, enginePort ?: port, audio, store, source, host, events, Random(seed), sleepRoute,
+            wallClock = wallClock)
         scope.testScheduler.runCurrent()
         scope.assertHealthy()
     }
 
     val state: SessionState get() = engine.state.value
     val now: Long get() = clock.nowMs()
+    val wallNow: Long get() = wallClock.nowMs()
 
     fun launcherStart() {
         engine.onUiEntry(LAUNCHER)
