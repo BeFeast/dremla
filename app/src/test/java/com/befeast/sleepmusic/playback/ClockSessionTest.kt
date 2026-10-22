@@ -306,6 +306,76 @@ class ClockSessionTest {
     }
 
     @Test
+    fun aWaitingClockRequestPastItsWindowEndNeverStarts() {
+        // #75: first run, the download outlasts Clock's sleep window and no stop arrives.
+        for (lateMs in listOf(0L, 30 * 60_000L)) {
+            val store = InMemoryPlaybackStore().apply { timerMinutes = 120; tvOff = true }
+            val h = EngineHarness(store = store, loaded = false)
+            val windowEnd = h.wallNow + 60 * 60_000L
+            assertNull(h.engine.startClockSession(request(h, minutes = 45, windowEndMs = windowEnd)))
+            h.settle()
+            h.advance(windowEnd - h.wallNow + lateMs)
+            assertTrue("the wall clock reached the window end", h.wallNow >= windowEnd)
+            h.source.emit(h.collection)
+            h.advance(60_000L)
+            assertEquals("late by $lateMs ms: no night after the window", Phase.Idle, h.state.phase)
+            assertEquals(0, h.state.sessionId)
+            assertTrue("no player started", h.played.isEmpty())
+            assertFalse(h.state.clockNight)
+            assertTrue("the collection is shown as loaded", h.state.collectionLoaded)
+            assertEquals("the menu shows the listener's settings again", 120, h.state.timerMinutes)
+            assertTrue(h.state.tvOff)
+            h.engine.setTimerMinutes(90)
+            h.settle()
+            assertEquals(90, store.timerMinutes)
+        }
+    }
+
+    @Test
+    fun aWaitingRequestPastItsWindowFreesTheMenuAndClocksNextRequestBeforeTheCollection() {
+        // #75 review: the collection is still missing after the window end (a stalled first download).
+        val store = InMemoryPlaybackStore().apply { timerMinutes = 120; tvOff = true }
+        val h = EngineHarness(store = store, loaded = false)
+        val windowEnd = h.wallNow + 60 * 60_000L
+        assertNull(h.engine.startClockSession(request(h, id = "late", minutes = 45, windowEndMs = windowEnd)))
+        h.settle()
+        h.advance(61 * 60_000L)
+        assertTrue("still shown until something asks", h.state.clockNight)
+        h.engine.refreshSleepRoute()   // the menu opens
+        h.settle()
+        assertFalse(h.state.clockNight)
+        assertEquals(120, h.state.timerMinutes)
+        assertTrue(h.state.tvOff)
+        h.engine.setTimerMinutes(90)
+        h.engine.setTvOff(false)
+        h.settle()
+        assertEquals(90, store.timerMinutes)
+        assertFalse(store.tvOff)
+        assertNull("Clock's next request is accepted", h.engine.startClockSession(
+            request(h, id = "next", minutes = 30, windowEndMs = h.wallNow + 8 * 3_600_000L)))
+        h.settle()
+        assertTrue(h.state.clockNight)
+        h.source.emit(h.collection)
+        h.settle()
+        assertEquals(Phase.Playing, h.state.phase)
+        assertEquals("the new request's night", 30 * 60L, h.state.timerRemainingSec)
+    }
+
+    @Test
+    fun aWaitingClockRequestStillInsideItsWindowStarts() {
+        val h = EngineHarness(loaded = false)
+        val windowEnd = h.wallNow + 60 * 60_000L
+        assertNull(h.engine.startClockSession(request(h, minutes = 45, windowEndMs = windowEnd)))
+        h.settle()
+        h.advance(59 * 60_000L)
+        h.source.emit(h.collection)
+        h.settle()
+        assertEquals(Phase.Playing, h.state.phase)
+        assertEquals(45 * 60L, h.state.timerRemainingSec)
+        assertTrue(h.state.clockNight)
+    }
+
+    @Test
     fun aCancelledWaitingClockRequestShowsTheListenersSettingsAgain() {
         val store = InMemoryPlaybackStore().apply { timerMinutes = 120; tvOff = true }
         val h = EngineHarness(store = store, loaded = false)

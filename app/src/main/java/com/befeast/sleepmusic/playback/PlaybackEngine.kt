@@ -178,6 +178,13 @@ class PlaybackEngine(
         pendingStart = false
         val eligible = eligibleIds(collection)
         playableCount = eligible.size
+        // Clock's request may have waited past its sleep window (first run, slow download): it never starts (#75).
+        if (pendingClock?.let { it.windowEndMs <= wallClock.nowMs() } == true) {
+            dropWaitingClock()
+            mutableState.update { it.copy(collectionLoaded = true, playableCount = eligible.size, online = source.online,
+                onlinePhase = if (source.online && eligible.isEmpty()) "unavailable" else it.onlinePhase) }
+            return
+        }
         if (eligible.isEmpty() && !source.online) {
             dropWaitingClock()
             mutableState.update { it.copy(collectionLoaded = true, playableCount = 0) }
@@ -330,6 +337,7 @@ class PlaybackEngine(
     }
 
     override fun startClockSession(request: ClockSessionRequest): String? {
+        expireWaitingClock()
         ClockSessions.refusal(request, wallClock.nowMs(), store.lastClockRequestId)?.let { return it }
         if (pendingStart || commandSession(allowDismiss = false) != null) return "a night is already playing"
         store.lastClockRequestId = request.requestId
@@ -389,6 +397,7 @@ class PlaybackEngine(
     }
 
     override fun setTvOff(enabled: Boolean) {
+        expireWaitingClock()
         // A Clock night never turns the TV off (#65): its row shows that night's "off" and a pick changes nothing.
         if (clockNight()) return
         store.tvOff = enabled
@@ -396,10 +405,13 @@ class PlaybackEngine(
     }
 
     override fun refreshSleepRoute() {
+        // Called when the menu opens: a waiting Clock request past its window no longer shows (#75).
+        expireWaitingClock()
         mutableState.update { it.copy(sleepRouteStatus = sleepRoute.status()) }
     }
 
     override fun setTimerMinutes(minutes: Int) {
+        expireWaitingClock()
         val value = SleepTimer.sanitize(minutes)
         // A Clock night plays Clock's music minutes: a pick changes only that night, never the listener's timer.
         // While Clock's request still waits for the collection, the request keeps its own minutes.
@@ -699,6 +711,14 @@ class PlaybackEngine(
 
     /** A Clock night is playing, or Clock's accepted request still waits for the collection (first run). */
     private fun clockNight(): Boolean = session?.clock != null || (pendingStart && pendingClock != null)
+
+    /** Clock's waiting request whose sleep window has ended is dropped, also before the collection arrives (#75). */
+    private fun expireWaitingClock() {
+        val waiting = pendingClock ?: return
+        if (waiting.windowEndMs > wallClock.nowMs()) return
+        pendingStart = false
+        dropWaitingClock()
+    }
 
     /** A waiting Clock request that will not start: the menu shows the listener's own settings again. */
     private fun dropWaitingClock() {
