@@ -2,6 +2,7 @@ package com.befeast.sleepmusic.playback
 
 import com.befeast.sleepmusic.playback.testing.EngineHarness
 import com.befeast.sleepmusic.playback.testing.InMemoryPlaybackStore
+import com.befeast.sleepmusic.playback.testing.Tracks
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -118,6 +119,138 @@ class ClockSessionTest {
         assertEquals(90, h.state.timerMinutes)
         assertEquals(90, store.timerMinutes)
         assertEquals(h.now + 90 * 60_000L, h.state.timerEndAtMs)
+    }
+
+    @Test
+    fun theTvOffRowInAClockNightShowsTheNightAndAPickWritesNothing() {
+        // #69: the menu row reads "off" for a Clock night; MainActivity sends setTvOff(!state.tvOff) = true.
+        for (saved in listOf(false, true)) {
+            val store = InMemoryPlaybackStore().apply { tvOff = saved }
+            val h = EngineHarness(store = store)
+            assertNull(h.engine.startClockSession(request(h, minutes = 45)))
+            h.settle()
+            assertFalse("a Clock night never turns the TV off", h.state.tvOff)
+            h.engine.setTvOff(!h.state.tvOff)
+            h.settle()
+            assertFalse("the row still shows the night's off", h.state.tvOff)
+            assertEquals("the listener's own TV-off setting is untouched", saved, store.tvOff)
+            h.advance(45 * 60_000L + 1_000L)
+            assertEquals(Phase.Finished, h.state.phase)
+            assertTrue("still closes for Clock", h.state.closeActivity)
+            assertEquals(saved, store.tvOff)
+            h.launcherStart()
+            assertEquals("a later launcher night uses the listener's setting", saved, h.state.tvOff)
+        }
+    }
+
+    @Test
+    fun aLauncherNightStillTogglesAndPersistsTvOff() {
+        val store = InMemoryPlaybackStore().apply { tvOff = false }
+        val h = EngineHarness(store = store)
+        h.launcherStart()
+        h.engine.setTvOff(true)
+        h.settle()
+        assertTrue(h.state.tvOff)
+        assertTrue(store.tvOff)
+    }
+
+    @Test
+    fun whileAClockRequestWaitsPicksWriteNothingAndTheMenuShowsTheNight() {
+        // #70: first run, the collection is not ready yet; the accepted request waits in pendingClock.
+        for (saved in listOf(false, true)) {
+            val store = InMemoryPlaybackStore().apply { timerMinutes = 120; tvOff = saved }
+            val h = EngineHarness(store = store, loaded = false)
+            assertNull(h.engine.startClockSession(request(h, minutes = 45)))
+            h.settle()
+            h.engine.setTimerMinutes(90)
+            h.engine.setTvOff(!h.state.tvOff)
+            h.settle()
+            assertEquals("the listener's timer is untouched", 120, store.timerMinutes)
+            assertEquals("the listener's TV-off setting is untouched", saved, store.tvOff)
+            assertEquals(Phase.Idle, h.state.phase)
+            assertEquals("the waiting night's minutes", 45, h.state.timerMinutes)
+            assertFalse("the waiting night never turns the TV off", h.state.tvOff)
+            h.source.emit(h.collection)
+            h.settle()
+            assertEquals(Phase.Playing, h.state.phase)
+            assertEquals("the Clock request keeps its own minutes", 45 * 60L, h.state.timerRemainingSec)
+            assertEquals(45, h.state.timerMinutes)
+            assertEquals(120, store.timerMinutes)
+            assertEquals(saved, store.tvOff)
+        }
+    }
+
+    @Test
+    fun aWaitingClockRequestDroppedByStopOrSourceChangeFreesTheSettings() {
+        for (drop in listOf("stop", "online")) {
+            val store = InMemoryPlaybackStore().apply { timerMinutes = 120; tvOff = true }
+            val h = EngineHarness(store = store, loaded = false)
+            assertNull(h.engine.startClockSession(request(h, minutes = 45)))
+            h.settle()
+            if (drop == "stop") h.engine.stop(CommandSource.System) else h.engine.setOnline(!h.state.online)
+            h.settle()
+            assertEquals(drop, 120, h.state.timerMinutes)
+            assertTrue(drop, h.state.tvOff)
+            h.engine.setTimerMinutes(90)
+            h.engine.setTvOff(false)
+            h.settle()
+            assertEquals("$drop: a pick is the listener's again", 90, store.timerMinutes)
+            assertFalse(drop, store.tvOff)
+            assertEquals(drop, 90, h.state.timerMinutes)
+            assertFalse(drop, h.state.tvOff)
+        }
+    }
+
+    @Test
+    fun aLauncherStartReplacingAWaitingClockRequestShowsTheListenersSettings() {
+        val store = InMemoryPlaybackStore().apply { timerMinutes = 120; tvOff = true }
+        val h = EngineHarness(store = store, loaded = false)
+        assertNull(h.engine.startClockSession(request(h, minutes = 45)))
+        h.settle()
+        h.launcherStart()
+        assertEquals(120, h.state.timerMinutes)
+        assertTrue(h.state.tvOff)
+        h.engine.setTimerMinutes(90)
+        h.settle()
+        assertEquals(90, store.timerMinutes)
+        h.source.emit(h.collection)
+        h.settle()
+        assertEquals("the launcher night, not Clock's", 90 * 60L, h.state.timerRemainingSec)
+    }
+
+    @Test
+    fun aClockRequestWithNothingEligibleLeavesTheListenersSettingsWorking() {
+        val store = InMemoryPlaybackStore().apply { timerMinutes = 120; tvOff = true }
+        val h = EngineHarness(store = store, tracks = Tracks.many(2), loaded = false)
+        store.block("amb-001")
+        store.block("amb-002")
+        assertNull(h.engine.startClockSession(request(h, minutes = 45)))
+        h.source.emit(h.collection)
+        h.settle()
+        assertEquals("no night starts", Phase.Idle, h.state.phase)
+        assertEquals(120, h.state.timerMinutes)
+        assertTrue(h.state.tvOff)
+        h.engine.setTimerMinutes(90)
+        h.engine.setTvOff(false)
+        h.settle()
+        assertEquals(90, store.timerMinutes)
+        assertFalse(store.tvOff)
+    }
+
+    @Test
+    fun aCancelledWaitingClockRequestShowsTheListenersSettingsAgain() {
+        val store = InMemoryPlaybackStore().apply { timerMinutes = 120; tvOff = true }
+        val h = EngineHarness(store = store, loaded = false)
+        assertNull(h.engine.startClockSession(request(h, minutes = 45)))
+        h.settle()
+        h.engine.cancelPendingStart()
+        h.settle()
+        assertEquals(120, h.state.timerMinutes)
+        assertTrue(h.state.tvOff)
+        h.engine.setTimerMinutes(90)
+        h.settle()
+        assertEquals("with no Clock request a pick is the listener's again", 90, store.timerMinutes)
+        assertEquals(90, h.state.timerMinutes)
     }
 
     @Test

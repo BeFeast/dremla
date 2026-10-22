@@ -23,6 +23,8 @@ missing sleep route; #6 can display sleepRouteStatus in its menu.
 PlaybackControls.setTvOff synchronously persists tv_off in the existing private
 playback preferences, default true, and publishes SessionState.tvOff. Changes
 apply at the current night's end; no preference change itself requests sleep.
+A Clock night never turns the TV off: during it, and while Clock's accepted
+request still waits for the collection, setTvOff changes nothing (#69, #70).
 
 AndroidSleepRoute rechecks capability at the point of use:
 

@@ -162,8 +162,10 @@ class PlaybackEngine(
             play(CommandSource.Remote)
             return
         }
-        // A new accepted launch must not replay the previous night's Activity dismissal.
-        mutableState.update { it.copy(phase = Phase.Idle, closeActivity = false, endReason = null) }
+        // A new accepted launch must not replay the previous night's Activity dismissal. Its menu shows the
+        // listener's own settings, also after a Clock night or a dropped Clock request showed that night's.
+        mutableState.update { it.copy(phase = Phase.Idle, closeActivity = false, endReason = null,
+            timerMinutes = store.timerMinutes, tvOff = store.tvOff) }
         val collection = source.collection.value
         if (collection == null) {
             pendingStart = true
@@ -177,6 +179,7 @@ class PlaybackEngine(
         val eligible = eligibleIds(collection)
         playableCount = eligible.size
         if (eligible.isEmpty() && !source.online) {
+            dropWaitingClock()
             mutableState.update { it.copy(collectionLoaded = true, playableCount = 0) }
             return
         }
@@ -190,7 +193,10 @@ class PlaybackEngine(
         pendingClock = null
         val minutes = clockRequest?.musicMinutes ?: SleepTimer.sanitize(store.timerMinutes)
         val first = queue.begin(eligible)
-        if (first == null && !source.online) return
+        if (first == null && !source.online) {
+            if (clockRequest != null) showStoredSettings()
+            return
+        }
         val s = Session(++sessionCounter, SleepTimer.start(now, minutes), now, clockRequest, minutes)
         session = s
         envelope.reset(now)
@@ -320,7 +326,7 @@ class PlaybackEngine(
 
     override fun cancelPendingStart() {
         pendingStart = false
-        pendingClock = null
+        dropWaitingClock()
     }
 
     override fun startClockSession(request: ClockSessionRequest): String? {
@@ -329,7 +335,9 @@ class PlaybackEngine(
         store.lastClockRequestId = request.requestId
         source.onLaunch()
         if (session?.night?.phase == "unavailable") finish(EndReason.Stopped)
-        mutableState.update { it.copy(phase = Phase.Idle, closeActivity = false, endReason = null) }
+        // While the request waits for the collection, the menu already shows that night's settings.
+        mutableState.update { it.copy(phase = Phase.Idle, closeActivity = false, endReason = null,
+            timerMinutes = request.musicMinutes, tvOff = false) }
         pendingClock = request
         val collection = source.collection.value
         if (collection == null) {
@@ -346,6 +354,7 @@ class PlaybackEngine(
 
     override fun stop(source: CommandSource) {
         pendingStart = false
+        dropWaitingClock()
         if (session != null) finish(EndReason.Stopped)
     }
 
@@ -372,6 +381,8 @@ class PlaybackEngine(
     }
 
     override fun setTvOff(enabled: Boolean) {
+        // A Clock night never turns the TV off (#65): its row shows that night's "off" and a pick changes nothing.
+        if (clockNight()) return
         store.tvOff = enabled
         mutableState.update { it.copy(tvOff = enabled) }
     }
@@ -383,7 +394,8 @@ class PlaybackEngine(
     override fun setTimerMinutes(minutes: Int) {
         val value = SleepTimer.sanitize(minutes)
         // A Clock night plays Clock's music minutes: a pick changes only that night, never the listener's timer.
-        val clockNight = session?.clock != null
+        // While Clock's request still waits for the collection, the request keeps its own minutes.
+        val clockNight = clockNight()
         if (!clockNight) store.timerMinutes = value
         val s = commandSession()
         if (s == null) {
@@ -675,6 +687,20 @@ class PlaybackEngine(
     }
 
     private fun tvOffFor(s: Session): Boolean = s.clock == null && store.tvOff
+
+    /** A Clock night is playing, or Clock's accepted request still waits for the collection (first run). */
+    private fun clockNight(): Boolean = session?.clock != null || (pendingStart && pendingClock != null)
+
+    /** A waiting Clock request that will not start: the menu shows the listener's own settings again. */
+    private fun dropWaitingClock() {
+        if (pendingClock == null) return
+        pendingClock = null
+        showStoredSettings()
+    }
+
+    private fun showStoredSettings() {
+        mutableState.update { if (it.isActive) it else it.copy(timerMinutes = store.timerMinutes, tvOff = store.tvOff) }
+    }
 
     /** The menu's timer: a Clock night shows its own minutes, a normal night the listener's choice. */
     private fun timerMinutesFor(s: Session): Int = if (s.clock != null) s.minutes else store.timerMinutes

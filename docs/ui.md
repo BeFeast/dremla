@@ -32,9 +32,12 @@ A first-run retry has the same focus fill and ring as every menu item.
 - Menu: left/right traverses all six existing timer choices, including 45 minutes;
   up/down reaches TV off, refresh, like/unlike and never again.
   Initial focus is 90 minutes; the ember dot identifies the currently selected timer (during a
-  Clock night, that night's timer: Clock's music minutes, or a pick made in that night).
+  Clock night, that night's timer: Clock's music minutes, or a pick made in that night; while
+  Clock's request waits for the collection, its music minutes, and picks change nothing).
 - There is no start-volume row: the app never changes the system volume (#34).
-  TV off toggles its persisted setting; the row also identifies the available sleep route.
+  TV off toggles its persisted setting (during a Clock night, or while Clock's request waits
+  for the collection, it shows that night's «off» and changes nothing); the row also identifies
+  the available sleep route.
 - BACK closes the menu. Outside it, normal activity BACK behavior applies, without
   stopping an active session. Volume/mute keys remain entirely with the system.
 - Long OK on an already focused menu control consumes the hold without choosing it.
