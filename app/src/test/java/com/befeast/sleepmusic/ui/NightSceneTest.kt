@@ -43,6 +43,19 @@ class NightSceneTest {
         compose.onNodeWithTag("timer-90").assertIsFocused()
         compose.onRoot().captureGolden("night-menu.png")
     }
+    @Test fun menuInAClockNight() {
+        // #73: a Clock night never turns the TV off; the row says why it does not react.
+        // With the Music source row, as on the TX10 (production supports online).
+        compose.setContent { NightScene(playing.copy(clockNight = true, tvOff = false, timerMinutes = 45), menuOpen = true, onSource = {}) }
+        compose.onNodeWithTag("timer-90").assertIsFocused()
+        compose.onNodeWithText("off · Clock night").assertExists()
+        compose.onRoot().captureGolden("night-menu-clock.png")
+    }
+    @Test fun menuInARegularNightKeepsTheRouteWording() {
+        compose.setContent { NightScene(playing.copy(tvOff = false), menuOpen = true) }
+        compose.onNodeWithText("off · not enabled").assertExists()
+        compose.onAllNodesWithText("off · Clock night").assertCountEquals(0)
+    }
     @Test fun download() {
         compose.setContent { NightScene(SessionState(), CollectionStatus(CollectionPhase.Downloading,
             Library.Progress(25, 60, 42, 100, ""))) }

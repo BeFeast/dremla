@@ -195,7 +195,11 @@ fun NightScene(
             SleepRouteStatus.Accessibility -> "accessibility"
         }
         val rows = (if (source != null) listOf(Triple("source", "Music source", if (s.online) "Online · select for downloaded" else "Downloaded · select for online")) else emptyList()) + listOf(
-            Triple("tv", "TV off", if (s.tvOff) "on · ${route()}" else "off · ${route()}"),
+            Triple("tv", "TV off", when {
+                s.clockNight -> "off · Clock night"   // a Clock night never turns the TV off (#73)
+                s.tvOff -> "on · ${route()}"
+                else -> "off · ${route()}"
+            }),
             Triple("refresh", if (s.online) "Online catalog" else "Refresh collection", if (s.online && s.onlinePhase == "unavailable") "unavailable · needs catalog or new launch" else "${s.playableCount} tracks"),
             Triple("like", if (s.track?.liked == true) "Unlike" else "Like", "current track"),
             Triple("never", "Never again", "skip and exclude"),

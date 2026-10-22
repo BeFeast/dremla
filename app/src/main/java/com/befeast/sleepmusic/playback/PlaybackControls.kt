@@ -11,7 +11,7 @@ enum class CommandSource { Remote, MediaSession, System, Menu }
  * [onUiEntry] do nothing unless a session is active, whatever their source.
  */
 interface PlaybackControls {
-    /** Cancels only a launcher request waiting for the first collection. */
+    /** Cancels a start waiting for the first collection: a launcher start or Clock's accepted request. */
     fun cancelPendingStart() {}
     val state: StateFlow<SessionState>
     fun setOnline(enabled: Boolean) {}
@@ -48,6 +48,9 @@ interface PlaybackControls {
     /** Starts a night requested by Clock; returns why it was refused, or null when it started. */
     fun startClockSession(request: ClockSessionRequest): String? = "not supported"
 
-    /** Ends the night Clock started with [requestId]; any other session is left alone. */
+    /**
+     * Ends the night Clock started with [requestId], or cancels Clock's accepted request with that id
+     * while it still waits for the collection (#72); any other session or request is left alone.
+     */
     fun stopClockSession(requestId: String) {}
 }

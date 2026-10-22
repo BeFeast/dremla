@@ -53,7 +53,7 @@
             android:noHistory="true"
             android:theme="@android:style/Theme.NoDisplay" />
 
-        <!-- Clock's "I'm awake" while music still plays: stops only the night with that request id. -->
+        <!-- Clock's "I'm awake": stops only the night with that request id, or cancels that request while it waits (#72). -->
         <receiver
             android:name=".SessionCommandReceiver"
             android:exported="true" />

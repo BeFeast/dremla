@@ -6,7 +6,10 @@ import android.content.Intent
 import com.befeast.sleepmusic.playback.ClockSessions
 import com.befeast.sleepmusic.playback.PlaybackProvider
 
-/** Clock's "I'm awake" while the music still plays: stops only the night Clock started with that id. */
+/**
+ * Clock's "I'm awake": stops only the night Clock started with that id, or cancels that request while it
+ * still waits for the collection on first run (#72).
+ */
 class SessionCommandReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ClockSessions.ACTION_STOP) return

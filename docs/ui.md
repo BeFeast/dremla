@@ -35,9 +35,9 @@ A first-run retry has the same focus fill and ring as every menu item.
   Clock night, that night's timer: Clock's music minutes, or a pick made in that night; while
   Clock's request waits for the collection, its music minutes, and picks change nothing).
 - There is no start-volume row: the app never changes the system volume (#34).
-  TV off toggles its persisted setting (during a Clock night, or while Clock's request waits
-  for the collection, it shows that night's «off» and changes nothing); the row also identifies
-  the available sleep route.
+  TV off toggles its persisted setting; the row also identifies the available sleep route. During
+  a Clock night, or while Clock's request waits for the collection, it reads «off · Clock night»
+  and changes nothing (golden `night-menu-clock.png`).
 - BACK closes the menu. Outside it, normal activity BACK behavior applies, without
   stopping an active session. Volume/mute keys remain entirely with the system.
 - Long OK on an already focused menu control consumes the hold without choosing it.
@@ -76,7 +76,7 @@ the kit's optional fade animation. Real-panel legibility remains operator accept
 
 ## Automated acceptance
 
-NightSceneTest covers all six golden scenes, D-pad traversal and action callbacks,
+NightSceneTest covers all seven golden scenes, D-pad traversal and action callbacks,
 visible focus-fill pixels for every menu control, first-run retry and refresh failure.
 BrandNightTest pins the night palette and proves all three platform fallback families
 build without silently returning the plain Archivo resource family. Existing

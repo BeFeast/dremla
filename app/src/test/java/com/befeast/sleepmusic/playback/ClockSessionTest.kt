@@ -210,6 +210,7 @@ class ClockSessionTest {
         h.launcherStart()
         assertEquals(120, h.state.timerMinutes)
         assertTrue(h.state.tvOff)
+        assertFalse("a launcher start is not a Clock night", h.state.clockNight)
         h.engine.setTimerMinutes(90)
         h.settle()
         assertEquals(90, store.timerMinutes)
@@ -235,6 +236,73 @@ class ClockSessionTest {
         h.settle()
         assertEquals(90, store.timerMinutes)
         assertFalse(store.tvOff)
+    }
+
+    @Test
+    fun theStateMarksAClockNightAndAWaitingRequestOnly() {
+        // #73: SessionState.clockNight drives the TV off row's «off · Clock night».
+        val waiting = EngineHarness(loaded = false)
+        assertFalse(waiting.state.clockNight)
+        assertNull(waiting.engine.startClockSession(request(waiting, minutes = 45)))
+        waiting.settle()
+        assertTrue("a waiting Clock request", waiting.state.clockNight)
+        waiting.source.emit(waiting.collection)
+        waiting.settle()
+        assertEquals(Phase.Playing, waiting.state.phase)
+        assertTrue("a playing Clock night", waiting.state.clockNight)
+        waiting.engine.pause(CommandSource.Remote)
+        waiting.settle()
+        assertTrue("a paused Clock night", waiting.state.clockNight)
+        waiting.engine.stopClockSession("req-1")
+        waiting.settle()
+        assertFalse("after the Clock night", waiting.state.clockNight)
+        waiting.launcherStart()
+        assertEquals(Phase.Playing, waiting.state.phase)
+        assertFalse("a launcher night", waiting.state.clockNight)
+
+        val dropped = EngineHarness(loaded = false)
+        assertNull(dropped.engine.startClockSession(request(dropped, minutes = 45)))
+        dropped.settle()
+        dropped.engine.cancelPendingStart()
+        dropped.settle()
+        assertFalse("a dropped request", dropped.state.clockNight)
+    }
+
+    @Test
+    fun aWakeWhileTheRequestStillWaitsCancelsItAndNothingPlaysLater() {
+        // #72: first run, Clock's «Я проснулся» sends the stop while Dremla is still loading.
+        val store = InMemoryPlaybackStore().apply { timerMinutes = 120; tvOff = true }
+        val h = EngineHarness(store = store, loaded = false)
+        assertNull(h.engine.startClockSession(request(h, id = "night-a", minutes = 45)))
+        h.settle()
+        h.engine.stopClockSession("other")
+        h.settle()
+        assertTrue("another id leaves the waiting request", h.state.clockNight)
+        h.engine.stopClockSession("night-a")
+        h.settle()
+        assertFalse(h.state.clockNight)
+        h.source.emit(h.collection)
+        h.advance(60_000L)
+        assertEquals("no night starts after the wake", Phase.Idle, h.state.phase)
+        assertEquals(0, h.state.sessionId)
+        assertTrue("no player started", h.played.isEmpty())
+        assertEquals("the menu shows the listener's settings again", 120, h.state.timerMinutes)
+        assertTrue(h.state.tvOff)
+        h.engine.setTimerMinutes(90)
+        h.settle()
+        assertEquals(90, store.timerMinutes)
+
+        // A stop for another id leaves the waiting request, which still plays its night.
+        val other = EngineHarness(loaded = false)
+        assertNull(other.engine.startClockSession(request(other, id = "night-b", minutes = 45)))
+        other.settle()
+        other.engine.stopClockSession("night-a")
+        other.settle()
+        assertTrue(other.state.clockNight)
+        other.source.emit(other.collection)
+        other.settle()
+        assertEquals(Phase.Playing, other.state.phase)
+        assertEquals(45 * 60L, other.state.timerRemainingSec)
     }
 
     @Test

@@ -165,7 +165,7 @@ class PlaybackEngine(
         // A new accepted launch must not replay the previous night's Activity dismissal. Its menu shows the
         // listener's own settings, also after a Clock night or a dropped Clock request showed that night's.
         mutableState.update { it.copy(phase = Phase.Idle, closeActivity = false, endReason = null,
-            timerMinutes = store.timerMinutes, tvOff = store.tvOff) }
+            timerMinutes = store.timerMinutes, tvOff = store.tvOff, clockNight = false) }
         val collection = source.collection.value
         if (collection == null) {
             pendingStart = true
@@ -337,7 +337,7 @@ class PlaybackEngine(
         if (session?.night?.phase == "unavailable") finish(EndReason.Stopped)
         // While the request waits for the collection, the menu already shows that night's settings.
         mutableState.update { it.copy(phase = Phase.Idle, closeActivity = false, endReason = null,
-            timerMinutes = request.musicMinutes, tvOff = false) }
+            timerMinutes = request.musicMinutes, tvOff = false, clockNight = true) }
         pendingClock = request
         val collection = source.collection.value
         if (collection == null) {
@@ -349,7 +349,15 @@ class PlaybackEngine(
     }
 
     override fun stopClockSession(requestId: String) {
-        if (session?.clock?.requestId == requestId) finish(EndReason.Stopped)
+        if (session?.clock?.requestId == requestId) {
+            finish(EndReason.Stopped)
+            return
+        }
+        // Clock's wake while its request still waits for the collection (first run): no night starts later (#72).
+        if (pendingClock?.requestId == requestId) {
+            pendingStart = false
+            dropWaitingClock()
+        }
     }
 
     override fun stop(source: CommandSource) {
@@ -672,6 +680,7 @@ class PlaybackEngine(
             onlineFailure = s.night?.lastFailure?.code,
             phase = phase,
             tvOff = tvOffFor(s),
+            clockNight = s.clock != null,
             sleepRouteStatus = mutableState.value.sleepRouteStatus,
             blackScreen = now - s.startedAtMs >= BLACK_AFTER_MS,
             sessionId = s.id,
@@ -699,7 +708,7 @@ class PlaybackEngine(
     }
 
     private fun showStoredSettings() {
-        mutableState.update { if (it.isActive) it else it.copy(timerMinutes = store.timerMinutes, tvOff = store.tvOff) }
+        mutableState.update { if (it.isActive) it else it.copy(timerMinutes = store.timerMinutes, tvOff = store.tvOff, clockNight = false) }
     }
 
     /** The menu's timer: a Clock night shows its own minutes, a normal night the listener's choice. */

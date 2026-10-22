@@ -41,6 +41,8 @@ data class SessionState(
     val phase: Phase = Phase.Idle,
     /** Persisted menu preference, effective at timer completion. */
     val tvOff: Boolean = true,
+    /** A Clock night plays or Clock's request waits: the menu's TV off row says why it reads off (#73). */
+    val clockNight: Boolean = false,
     val sleepRouteStatus: SleepRouteStatus = SleepRouteStatus.NotEnabled,
     /** Suppress all scene content after ten seconds; never reset by pause or timer edits. */
     val blackScreen: Boolean = false,
