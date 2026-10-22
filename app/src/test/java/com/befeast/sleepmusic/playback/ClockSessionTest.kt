@@ -362,7 +362,8 @@ class ClockSessionTest {
     }
 
     @Test
-    fun aWaitingClockRequestStillInsideItsWindowStarts() {
+    fun aWaitingClockRequestStartingLateStopsItsMusicAtTheWindowEnd() {
+        // #77 (replaces the #75 control that expected the full 45 min): the window is the planned wake-up.
         val h = EngineHarness(loaded = false)
         val windowEnd = h.wallNow + 60 * 60_000L
         assertNull(h.engine.startClockSession(request(h, minutes = 45, windowEndMs = windowEnd)))
@@ -370,9 +371,106 @@ class ClockSessionTest {
         h.advance(59 * 60_000L)
         h.source.emit(h.collection)
         h.settle()
-        assertEquals(Phase.Playing, h.state.phase)
-        assertEquals(45 * 60L, h.state.timerRemainingSec)
         assertTrue(h.state.clockNight)
+        assertEquals("only the minute left in the window", 60L, h.state.timerRemainingSec)
+        assertEquals("the night ends at the window end", h.now + 60_000L, h.state.timerEndAtMs)
+        assertEquals("a one-minute night is all fade", Phase.Fading, h.state.phase)
+        h.advance(60_000L + 100L)
+        assertEquals(Phase.Finished, h.state.phase)
+        assertEquals(EndReason.TimerEnded, h.state.endReason)
+        assertTrue("closes for Clock's protected screen", h.state.closeActivity)
+    }
+
+    @Test
+    fun aClockNightNeverPlaysPastTheWindowEnd() {
+        // #77: 45 music minutes requested, 20 minutes left in the window; the fade ends at the window end.
+        val h = EngineHarness()
+        val windowEnd = h.wallNow + 20 * 60_000L
+        assertNull(h.engine.startClockSession(request(h, minutes = 45, windowEndMs = windowEnd)))
+        h.settle()
+        assertEquals(Phase.Playing, h.state.phase)
+        assertEquals(20 * 60L, h.state.timerRemainingSec)
+        assertEquals(h.now + 20 * 60_000L, h.state.timerEndAtMs)
+        h.advance(10 * 60_000L + 1_000L)
+        assertEquals("the last ten minutes fade", Phase.Fading, h.state.phase)
+        h.advance(10 * 60_000L)
+        assertEquals(Phase.Finished, h.state.phase)
+        assertTrue(h.state.closeActivity)
+    }
+
+    @Test
+    fun aPickInAClockNightIsCappedAtTheWindowEnd() {
+        val store = InMemoryPlaybackStore().apply { timerMinutes = 120 }
+        val h = EngineHarness(store = store)
+        val windowEnd = h.wallNow + 40 * 60_000L
+        assertNull(h.engine.startClockSession(request(h, minutes = 30, windowEndMs = windowEnd)))
+        h.settle()
+        h.advance(5 * 60_000L)
+        h.engine.setTimerMinutes(90)
+        h.settle()
+        assertEquals("90 picked, but the window ends in 35 min", h.now + 35 * 60_000L, h.state.timerEndAtMs)
+        assertEquals(90, h.state.timerMinutes)
+        assertEquals(120, store.timerMinutes)
+    }
+
+    @Test
+    fun aPickInsideTheCappedFadeKeepsTheFadeGoing() {
+        // Review r1: 45 requested, 20 left; at minute 17 the night is deep in its fade. A pick cannot move the
+        // capped end, so the sleep factor must not climb back up near the planned wake-up.
+        val h = EngineHarness()
+        val windowEnd = h.wallNow + 20 * 60_000L
+        assertNull(h.engine.startClockSession(request(h, minutes = 45, windowEndMs = windowEnd)))
+        h.settle()
+        h.advance(17 * 60_000L)
+        val endAt = h.state.timerEndAtMs
+        val before = h.port.volume
+        h.engine.setTimerMinutes(90)
+        h.advance(5_000L)
+        assertEquals("the end stays at the window end", endAt, h.state.timerEndAtMs)
+        assertTrue("never louder after the pick: ${h.port.volume} vs $before", h.port.volume <= before + 1e-4f)
+        assertEquals(Phase.Fading, h.state.phase)
+    }
+
+    @Test
+    fun aLauncherNightIsNotCapped() {
+        val store = InMemoryPlaybackStore().apply { timerMinutes = 180 }
+        val h = EngineHarness(store = store)
+        h.launcherStart()
+        assertEquals(180 * 60L, h.state.timerRemainingSec)
+    }
+
+    @Test
+    fun anAcceptedClockRequestAlwaysStartsItsNight() {
+        // #78: the window ends 1 ms after the acceptance's first clock read, and each read moves the clock 2 ms.
+        val h = EngineHarness()
+        val windowEnd = h.wallNow + 1L
+        h.wallStepPerReadMs = 2L
+        val result = h.engine.startClockSession(request(h, minutes = 45, windowEndMs = windowEnd))
+        h.wallStepPerReadMs = 0L
+        h.settle()
+        assertNull("the single reading is before the window end: accepted", result)
+        assertEquals("accepted means a night started", 1, h.state.sessionId)
+    }
+
+    @Test
+    fun aClockRequestWithNothingToPlayIsRefusedToClock() {
+        // #78: an immediate start that cannot begin a night tells Clock instead of accepting silently.
+        val store = InMemoryPlaybackStore().apply { timerMinutes = 120; tvOff = true }
+        val h = EngineHarness(store = store, tracks = Tracks.many(2))
+        store.block("amb-001")
+        store.block("amb-002")
+        assertEquals("nothing to play", h.engine.startClockSession(request(h, id = "r", minutes = 45)))
+        h.settle()
+        assertEquals(Phase.Idle, h.state.phase)
+        assertFalse(h.state.clockNight)
+        assertEquals(120, h.state.timerMinutes)
+        assertTrue(h.state.tvOff)
+        // A refusal does not spend the id: once tracks are playable, the same request starts its night.
+        val unblocked = InMemoryPlaybackStore().apply { lastClockRequestId = store.lastClockRequestId }
+        val again = EngineHarness(store = unblocked)
+        assertNull(again.engine.startClockSession(request(again, id = "r", minutes = 45)))
+        again.settle()
+        assertEquals(Phase.Playing, again.state.phase)
     }
 
     @Test

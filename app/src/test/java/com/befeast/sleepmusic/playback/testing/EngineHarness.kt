@@ -35,7 +35,14 @@ class EngineHarness(
     val scope = CheckedTestScope()
     private var sleptMs = 0L
     val clock = Clock { scope.testScheduler.currentTime + sleptMs }
-    val wallClock = Clock { wallStartMs + scope.testScheduler.currentTime + sleptMs }
+    /** Test hook: every wall-clock read moves the wall clock on by this much, like a slow acceptance (#78). */
+    var wallStepPerReadMs = 0L
+    private var wallReadDriftMs = 0L
+    val wallClock = Clock {
+        val t = wallStartMs + scope.testScheduler.currentTime + sleptMs + wallReadDriftMs
+        wallReadDriftMs += wallStepPerReadMs
+        t
+    }
     val log = mutableListOf<String>()
     val port = FakePlayerPort(clock, log)
     val audio = FakeAudioControl(log)

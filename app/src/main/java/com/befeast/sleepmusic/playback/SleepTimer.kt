@@ -21,15 +21,17 @@ class SleepTimer private constructor(endAtMs: Long, private var fadeMs: Long) {
     fun sleepGain(nowMs: Long): Double = Fades.sleepGain(remainingMs(nowMs), fadeMs)
 
     /** A new timer choice during a session counts from now. */
-    fun rearm(nowMs: Long, minutes: Int) {
-        val durationMs = minutes * MINUTE_MS
+    fun rearm(nowMs: Long, minutes: Int) = rearmMs(nowMs, minutes * MINUTE_MS)
+
+    /** As [rearm], for a duration a Clock night may have capped at its window end (#77). */
+    fun rearmMs(nowMs: Long, durationMs: Long) {
         endAtMs = nowMs + durationMs
         fadeMs = fadeMsFor(durationMs)
     }
 
     companion object {
         const val DEFAULT_MINUTES = 120
-        private const val MINUTE_MS = 60_000L
+        const val MINUTE_MS = 60_000L
 
         /** The menu's choices in minutes (#6 renders them). */
         val CHOICES: List<Int> = listOf(30, 45, 60, 90, 120, 180)
@@ -39,9 +41,9 @@ class SleepTimer private constructor(endAtMs: Long, private var fadeMs: Long) {
 
         fun fadeMsFor(timerMs: Long): Long = min(Fades.DEFAULT_SLEEP_FADE_MS, timerMs)
 
-        fun start(nowMs: Long, minutes: Int): SleepTimer {
-            val durationMs = sanitize(minutes) * MINUTE_MS
-            return SleepTimer(nowMs + durationMs, fadeMsFor(durationMs))
-        }
+        fun start(nowMs: Long, minutes: Int): SleepTimer = startMs(nowMs, sanitize(minutes) * MINUTE_MS)
+
+        /** A night of [durationMs]: a Clock night capped at its window end (#77); the fade is its last min(10 min, duration). */
+        fun startMs(nowMs: Long, durationMs: Long): SleepTimer = SleepTimer(nowMs + durationMs, fadeMsFor(durationMs))
     }
 }

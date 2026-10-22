@@ -52,6 +52,8 @@ class PlaybackEngine(
         val clock: ClockSessionRequest? = null,
         /** The minutes this night's timer is armed with: Clock's music minutes or the listener's choice. */
         var minutes: Int,
+        /** Engine-clock time of Clock's window end: a Clock night's music never runs past it (#77). */
+        val windowEndAtMs: Long? = null,
     ) {
         /** The listener's intent: the phase shows Paused. */
         var paused = false
@@ -174,21 +176,28 @@ class PlaybackEngine(
         startSession(collection)
     }
 
-    private fun startSession(collection: PlayableCollection) {
+    /**
+     * Starts a night. Returns why Clock's request did not get its night, or null when a night started or
+     * none was asked for by Clock. [wallNow] is the wall-clock reading of Clock's acceptance (#78).
+     */
+    private fun startSession(collection: PlayableCollection, wallNow: Long = wallClock.nowMs()): String? {
         pendingStart = false
         val eligible = eligibleIds(collection)
         playableCount = eligible.size
         // Clock's request may have waited past its sleep window (first run, slow download): it never starts (#75).
-        if (pendingClock?.let { it.windowEndMs <= wallClock.nowMs() } == true) {
+        if (pendingClock?.let { it.windowEndMs <= wallNow } == true) {
             dropWaitingClock()
             mutableState.update { it.copy(collectionLoaded = true, playableCount = eligible.size, online = source.online,
                 onlinePhase = if (source.online && eligible.isEmpty()) "unavailable" else it.onlinePhase) }
-            return
+            return WINDOW_ENDED
         }
-        if (eligible.isEmpty() && !source.online) {
+        if (eligible.isEmpty() && (!source.online || pendingClock != null)) {
+            // Offline nothing plays; a Clock request also gets no "unavailable" online night (#78).
+            val clockAsked = pendingClock != null
             dropWaitingClock()
-            mutableState.update { it.copy(collectionLoaded = true, playableCount = 0) }
-            return
+            mutableState.update { it.copy(collectionLoaded = true, playableCount = 0, online = source.online,
+                onlinePhase = if (source.online) "unavailable" else it.onlinePhase) }
+            return if (clockAsked) NOTHING_TO_PLAY else null
         }
         // Always write the silent start, whatever the last session left: the port may stand for a
         // player that does not exist yet and would start at volume 1.
@@ -201,10 +210,14 @@ class PlaybackEngine(
         val minutes = clockRequest?.musicMinutes ?: SleepTimer.sanitize(store.timerMinutes)
         val first = queue.begin(eligible)
         if (first == null && !source.online) {
-            if (clockRequest != null) showStoredSettings()
-            return
+            if (clockRequest == null) return null
+            showStoredSettings()
+            return NOTHING_TO_PLAY
         }
-        val s = Session(++sessionCounter, SleepTimer.start(now, minutes), now, clockRequest, minutes)
+        // A Clock night's music ends by Clock's window end, the planned wake-up; the fade ends with it (#77).
+        val windowEndAt = clockRequest?.let { now + (it.windowEndMs - wallNow) }
+        val durationMs = capped(minutes * SleepTimer.MINUTE_MS, now, windowEndAt)
+        val s = Session(++sessionCounter, SleepTimer.startMs(now, durationMs), now, clockRequest, minutes, windowEndAt)
         session = s
         envelope.reset(now)
         if (source.online) {
@@ -222,7 +235,8 @@ class PlaybackEngine(
         }
         publish()
         host.sessionStarted()
-        events.sessionStarted(s.id, minutes, volume)
+        // The night log records the night's real length: a capped Clock night logs its capped minutes.
+        events.sessionStarted(s.id, ((durationMs + SleepTimer.MINUTE_MS - 1) / SleepTimer.MINUTE_MS).toInt(), volume)
         if (s.night != null) resolveOnline(s) else events.trackStarted(s.id, first!!.id)
         tickJob?.cancel()
         tickJob = scope.launch {
@@ -231,6 +245,7 @@ class PlaybackEngine(
                 tick()
             }
         }
+        return null
     }
 
     // ---- commands ----
@@ -338,8 +353,11 @@ class PlaybackEngine(
 
     override fun startClockSession(request: ClockSessionRequest): String? {
         expireWaitingClock()
-        ClockSessions.refusal(request, wallClock.nowMs(), store.lastClockRequestId)?.let { return it }
+        // One wall-clock reading for the whole acceptance: what passed the window check also starts (#78).
+        val wallNow = wallClock.nowMs()
+        ClockSessions.refusal(request, wallNow, store.lastClockRequestId)?.let { return it }
         if (pendingStart || commandSession(allowDismiss = false) != null) return "a night is already playing"
+        val previousRequestId = store.lastClockRequestId
         store.lastClockRequestId = request.requestId
         source.onLaunch()
         if (session?.night?.phase == "unavailable") finish(EndReason.Stopped)
@@ -352,8 +370,11 @@ class PlaybackEngine(
             pendingStart = true
             return null
         }
-        startSession(collection)
-        return null
+        // A request that cannot start its night now is refused to Clock, never accepted silently (#78). Like any
+        // refusal it does not spend the request id, so Clock may send the same request again later.
+        val refused = startSession(collection, wallNow) ?: return null
+        store.lastClockRequestId = previousRequestId
+        return refused
     }
 
     override fun stopClockSession(requestId: String) {
@@ -423,7 +444,14 @@ class PlaybackEngine(
             return
         }
         s.minutes = value
-        s.timer.rearm(clock.nowMs(), value)
+        val now = clock.nowMs()
+        val durationMs = capped(value * SleepTimer.MINUTE_MS, now, s.windowEndAtMs)
+        // At the window cap a pick cannot move the end: the running fade goes on, never louder near the wake-up.
+        if (now + durationMs == s.timer.endAtMs && s.windowEndAtMs != null) {
+            publish()
+            return
+        }
+        s.timer.rearmMs(now, durationMs)
         publish()
     }
 
@@ -709,6 +737,10 @@ class PlaybackEngine(
 
     private fun tvOffFor(s: Session): Boolean = s.clock == null && store.tvOff
 
+    /** [durationMs] from [now], cut at a Clock night's window end when there is one. */
+    private fun capped(durationMs: Long, now: Long, windowEndAtMs: Long?): Long =
+        if (windowEndAtMs == null) durationMs else minOf(durationMs, windowEndAtMs - now).coerceAtLeast(0L)
+
     /** A Clock night is playing, or Clock's accepted request still waits for the collection (first run). */
     private fun clockNight(): Boolean = session?.clock != null || (pendingStart && pendingClock != null)
 
@@ -769,5 +801,9 @@ class PlaybackEngine(
         const val TICK_MS = 50L
         const val MAX_CONSECUTIVE_ERRORS = 3
         const val VOLUME_EPSILON = 1e-5f
+
+        /** Refusals of a Clock request that was valid on arrival but cannot start its night (#78). */
+        const val WINDOW_ENDED = "sleep window already ended"
+        const val NOTHING_TO_PLAY = "nothing to play"
     }
 }
