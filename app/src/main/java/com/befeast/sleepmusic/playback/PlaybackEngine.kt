@@ -45,7 +45,14 @@ class PlaybackEngine(
     private val wallClock: Clock = WallClock,
 ) : PlaybackControls {
 
-    private class Session(val id: Int, val timer: SleepTimer, val startedAtMs: Long, val clock: ClockSessionRequest? = null) {
+    private class Session(
+        val id: Int,
+        val timer: SleepTimer,
+        val startedAtMs: Long,
+        val clock: ClockSessionRequest? = null,
+        /** The minutes this night's timer is armed with: Clock's music minutes or the listener's choice. */
+        var minutes: Int,
+    ) {
         /** The listener's intent: the phase shows Paused. */
         var paused = false
 
@@ -184,7 +191,7 @@ class PlaybackEngine(
         val minutes = clockRequest?.musicMinutes ?: SleepTimer.sanitize(store.timerMinutes)
         val first = queue.begin(eligible)
         if (first == null && !source.online) return
-        val s = Session(++sessionCounter, SleepTimer.start(now, minutes), now, clockRequest)
+        val s = Session(++sessionCounter, SleepTimer.start(now, minutes), now, clockRequest, minutes)
         session = s
         envelope.reset(now)
         if (source.online) {
@@ -375,12 +382,15 @@ class PlaybackEngine(
 
     override fun setTimerMinutes(minutes: Int) {
         val value = SleepTimer.sanitize(minutes)
-        store.timerMinutes = value
+        // A Clock night plays Clock's music minutes: a pick changes only that night, never the listener's timer.
+        val clockNight = session?.clock != null
+        if (!clockNight) store.timerMinutes = value
         val s = commandSession()
         if (s == null) {
-            mutableState.update { if (it.isActive) it else it.copy(timerMinutes = value) }
+            if (!clockNight) mutableState.update { if (it.isActive) it else it.copy(timerMinutes = value) }
             return
         }
+        s.minutes = value
         s.timer.rearm(clock.nowMs(), value)
         publish()
     }
@@ -656,7 +666,7 @@ class PlaybackEngine(
             track = s.nowPlaying,
             trackRemainingSec = if (duration > 0) ceilSeconds(duration - port.positionMs) else 0,
             timerRemainingSec = ceilSeconds(s.timer.remainingMs(now)),
-            timerMinutes = store.timerMinutes,
+            timerMinutes = timerMinutesFor(s),
             endReason = null,
             collectionLoaded = true,
             playableCount = playableCount,
@@ -665,6 +675,9 @@ class PlaybackEngine(
     }
 
     private fun tvOffFor(s: Session): Boolean = s.clock == null && store.tvOff
+
+    /** The menu's timer: a Clock night shows its own minutes, a normal night the listener's choice. */
+    private fun timerMinutesFor(s: Session): Int = if (s.clock != null) s.minutes else store.timerMinutes
 
     private fun describe(s: Session, collection: PlayableCollection, id: String) {
         val track: Track? = collection.track(id)

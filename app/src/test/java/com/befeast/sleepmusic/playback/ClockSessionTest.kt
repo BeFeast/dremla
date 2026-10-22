@@ -39,6 +39,88 @@ class ClockSessionTest {
     }
 
     @Test
+    fun theMenuShowsTheClockNightsMinutesAndTheListenersTimerAfterIt() {
+        val store = InMemoryPlaybackStore().apply { timerMinutes = 120 }
+        val h = EngineHarness(store = store)
+        assertNull(h.engine.startClockSession(request(h, minutes = 45)))
+        h.settle()
+        assertEquals(Phase.Playing, h.state.phase)
+        assertEquals("the menu's dot and current label show the night's minutes", 45, h.state.timerMinutes)
+        h.engine.pause(CommandSource.Remote)
+        h.settle()
+        assertEquals(Phase.Paused, h.state.phase)
+        assertEquals(45, h.state.timerMinutes)
+        h.engine.play(CommandSource.Remote)
+        h.advance(36 * 60_000L)
+        assertEquals(Phase.Fading, h.state.phase)
+        assertEquals(45, h.state.timerMinutes)
+        h.advance(10 * 60_000L)
+        assertEquals(Phase.Finished, h.state.phase)
+        assertEquals("after the Clock night the menu shows the listener's timer", 120, h.state.timerMinutes)
+    }
+
+    @Test
+    fun aPickDuringAClockNightChangesOnlyThatNight() {
+        val store = InMemoryPlaybackStore().apply { timerMinutes = 120 }
+        val h = EngineHarness(store = store)
+        assertNull(h.engine.startClockSession(request(h, minutes = 45)))
+        h.settle()
+        h.advance(5 * 60_000L)
+        val sessionId = h.state.sessionId
+        val track = h.state.track?.id
+        val starts = h.events.startVolumes.size
+        h.engine.setTimerMinutes(90)
+        h.settle()
+        assertEquals(Phase.Playing, h.state.phase)
+        assertEquals(90, h.state.timerMinutes)
+        assertEquals("the same Clock night, not a new one", sessionId, h.state.sessionId)
+        assertEquals(track, h.state.track?.id)
+        assertEquals(starts, h.events.startVolumes.size)
+        assertFalse(h.state.tvOff)
+        assertEquals("the pick re-arms this night from now", h.now + 90 * 60_000L, h.state.timerEndAtMs)
+        assertEquals("the listener's own timer is untouched", 120, store.timerMinutes)
+        h.advance(90 * 60_000L + 1_000L)
+        assertEquals(Phase.Finished, h.state.phase)
+        assertEquals(EndReason.TimerEnded, h.state.endReason)
+        assertTrue("still a Clock night: it closes for Clock", h.state.closeActivity)
+        assertEquals(120, h.state.timerMinutes)
+        assertEquals(120, store.timerMinutes)
+    }
+
+    @Test
+    fun aPickArrivingAfterTheClockNightExpiredLeavesTheListenersTimer() {
+        val store = InMemoryPlaybackStore().apply { timerMinutes = 120 }
+        val h = EngineHarness(store = store)
+        assertNull(h.engine.startClockSession(request(h, minutes = 45)))
+        h.settle()
+        h.engine.pause(CommandSource.Remote)
+        h.settle()
+        // The box sleeps past the end; the pick reaches the engine before the first tick after wake.
+        h.sleepThrough(45 * 60_000L + 1_000L)
+        h.engine.setTimerMinutes(90)
+        h.settle()
+        assertEquals(Phase.Finished, h.state.phase)
+        assertEquals(EndReason.TimerEnded, h.state.endReason)
+        assertTrue("closes for Clock", h.state.closeActivity)
+        assertEquals("the menu shows the listener's timer", 120, h.state.timerMinutes)
+        assertEquals(120, store.timerMinutes)
+    }
+
+    @Test
+    fun aLauncherNightStillPersistsAndShowsThePick() {
+        val store = InMemoryPlaybackStore().apply { timerMinutes = 120 }
+        val h = EngineHarness(store = store)
+        h.launcherStart()
+        assertEquals(120, h.state.timerMinutes)
+        h.advance(5 * 60_000L)
+        h.engine.setTimerMinutes(90)
+        h.settle()
+        assertEquals(90, h.state.timerMinutes)
+        assertEquals(90, store.timerMinutes)
+        assertEquals(h.now + 90 * 60_000L, h.state.timerEndAtMs)
+    }
+
+    @Test
     fun invalidRepeatedOrConcurrentRequestsAreRefusedAndPlayNothing() {
         val h = EngineHarness()
         assertEquals("unknown mode", h.engine.startClockSession(request(h, mode = "nap")))
