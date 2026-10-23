@@ -60,7 +60,8 @@ fun NightScene(
         } else if (session.track != null) {
             Column(Modifier.fillMaxSize().padding(start = BrandSpacing.ScreenX, end = BrandSpacing.ScreenX,
                 bottom = BrandSpacing.ContentBottomReserve), verticalArrangement = Arrangement.Center) {
-                Eyebrow(if (session.phase == Phase.Paused) "PAUSED" else if (session.onlinePhase in listOf("starting", "resuming")) "CONNECTING" else session.track.category.uppercase(), type)
+                Eyebrow(if (session.phase == Phase.Paused) "PAUSED" else if (session.onlinePhase in listOf("starting", "resuming")) "CONNECTING"
+                    else if (session.startingAudio) "STARTING" else session.track.category.uppercase(), type)
                 Spacer(Modifier.height(16.dp))
                 BasicText(session.track.title, style = type.Title, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.widthIn(max = BrandSpacing.TitleMeasure))

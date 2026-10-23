@@ -6,10 +6,15 @@ and [collection.md](collection.md). Full player/menu scenes belong to #6.
 
 ## Black screen
 
-The engine records elapsed-realtime session start independently of the timer deadline.
-After 10,000 ms, its next 50 ms tick publishes blackScreen. Pause, skip, timer edits,
-activity recreation and wake do not reset that time. Every finished phase is black.
-A new explicit launcher night resets it.
+The engine records the elapsed-realtime moment of the night's first audio (the player's first
+`onPlaying`, when the 30 s fade-in starts), independently of the timer deadline. 10,000 ms after it,
+the next 50 ms tick publishes blackScreen (#88). Until the first audio the track screen stays on and
+`startingAudio` makes its eyebrow read STARTING (PAUSED and CONNECTING take precedence), so a slow first
+load never shows black silence. A night that cannot play (online unavailable) is black 10,000 ms after
+its start, and any night is black 60,000 ms after its start at the latest, so a paused or stalled first
+load never keeps the panel lit.
+Pause, skip, timer edits, activity recreation and wake do not reset that time. Every finished phase
+is black. A new explicit launcher night resets it.
 
 nightPlaceholder removes all content, including collection-error and missing-route
 messages, from black and finished scenes. These render through the existing pure
@@ -156,7 +161,7 @@ These are later operator checks, not commands run by this issue. They neither en
 accessibility nor lock the screen:
 
 - After a normal launcher start, use adb shell dumpsys window to inspect the Dremla
-  window's keep-screen-on flag; observe the panel turning black around ten seconds.
+  window's keep-screen-on flag; observe the panel turning black around ten seconds after the music starts.
 - Use adb shell dumpsys power and adb shell dumpsys media_session while music plays
   to observe the player wake lock and active playback, then repeat after idle completion.
 - Use adb shell dumpsys activity service com.befeast.sleepmusic/.playback.PlaybackService

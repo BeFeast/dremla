@@ -40,6 +40,11 @@ class NightSceneTest {
         compose.onNodeWithText("Remember Eternity 07").assertExists()
         compose.onNodeWithText("Downloading the collection").assertDoesNotExist()
     }
+    @Test fun starting() {
+        compose.setContent { NightScene(playing.copy(startingAudio = true)) }
+        compose.onNodeWithText("STARTING").assertExists()
+        compose.onRoot().captureGolden("night-player-starting.png")
+    }
     @Test fun longTitle() {
         compose.setContent { NightScene(playing.copy(track = playing.track!!.copy(
             title = "Whatever Happened to Peter Roe?, Part 1", artist = "TRG Banks", category = "Ambient"), timerRemainingSec = 1380)) }

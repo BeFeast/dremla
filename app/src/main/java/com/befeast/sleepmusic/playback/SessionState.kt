@@ -44,8 +44,10 @@ data class SessionState(
     /** A Clock night plays or Clock's request waits: the menu's TV off row says why it reads off (#73). */
     val clockNight: Boolean = false,
     val sleepRouteStatus: SleepRouteStatus = SleepRouteStatus.NotEnabled,
-    /** Suppress all scene content after ten seconds; never reset by pause or timer edits. */
+    /** Suppress all scene content ten seconds after the first audio (#88); never reset by pause or timer edits. */
     val blackScreen: Boolean = false,
+    /** The night waits for its first audio: the track screen stays on and says it is starting (#88). */
+    val startingAudio: Boolean = false,
     /**
      * Remove the activity task, without replaying any sleep request: set when a sleep request
      * succeeded, or when a late TV-off night is dismissed on wake with its lock suppressed.

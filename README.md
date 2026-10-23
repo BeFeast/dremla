@@ -53,7 +53,7 @@ A newer version installs over the previous one the same way and keeps the settin
 
 - **One press.** Starting Dremla from the launcher plays a random track from the selection with a 30-second fade-in, at the volume the TV box is already set to: Dremla never raises the volume. Only a launcher start plays music; resume, wake, boot or a restarted process never do.
 - **Offline.** The first launch downloads the selection once. Every file is checked against its SHA-256; an interrupted download continues where it stopped. After that Dremla needs no network. "Refresh collection" in the menu fetches new tracks when you ask for them and keeps the old ones playing if the download fails.
-- **Black screen.** About ten seconds after start the picture becomes pure black and stays black. The music continues; no clock, no artwork, no glow.
+- **Black screen.** About ten seconds after the music starts the picture becomes pure black and stays black. The music continues; no clock, no artwork, no glow.
 - **Timer and fade.** 30, 45, 60, 90, 120 or 180 minutes, remembered for the next night. The last ten minutes fade smoothly to silence, then playback stops. With "TV off" on (the default) the box goes to sleep and, if the TV follows HDMI-CEC, the TV goes to standby with it.
 - **Nothing restarts.** Waking the box, a reboot or a media key in the morning never starts music. If the system kills the app at night, it does not come back playing.
 - **No repeats.** Tracks play in a shuffle bag: nothing repeats until the whole selection has played. "Never again" removes a track for good, "Like" is remembered too; both survive restarts, reboots and refreshes.

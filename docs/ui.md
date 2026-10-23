@@ -13,7 +13,8 @@ No second player, timer, downloader or sleep action exists in the UI.
 | Download | Loading or downloading, including explicit refresh; byte progress, file count |
 | First-run error | Connection notice and focused Retry calling refresh |
 | Refresh error | Existing collection retained; non-blocking notice in menu. Also an unfinished first download whose verified tracks already play (#83) |
-| Black | Engine blackScreen after ten seconds; all content suppressed |
+| Starting | Player scene with the STARTING eyebrow until the night's first audio (#88) |
+| Black | Engine blackScreen ten seconds after the first audio (a minute after the start at the latest); all content suppressed |
 | Finished | Finished or closeActivity; all content suppressed, even an open menu |
 
 The engine owns blackout timing. Blackout closes an open menu and suppresses all
@@ -76,7 +77,7 @@ the kit's optional fade animation. Real-panel legibility remains operator accept
 
 ## Automated acceptance
 
-NightSceneTest covers all seven golden scenes, D-pad traversal and action callbacks,
+NightSceneTest covers all eight golden scenes, D-pad traversal and action callbacks,
 visible focus-fill pixels for every menu control, first-run retry and refresh failure.
 BrandNightTest pins the night palette and proves all three platform fallback families
 build without silently returning the plain Archivo resource family. Existing

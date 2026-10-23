@@ -97,6 +97,18 @@ class OnlineEngineTest {
         } finally { h.close() }
     }
 
+    @Test fun aNightThatCannotPlayIsBlackTenSecondsAfterItsStart() {
+        // #88: black follows the first audio; an unavailable night never gets one and still goes black.
+        val h = OnlineHarness(emptyList())
+        try {
+            assertEquals("unavailable", h.state.onlinePhase)
+            h.now += 9_950; h.scope.testScheduler.advanceTimeBy(50); h.settle()
+            assertFalse(h.state.blackScreen)
+            h.now += 50; h.scope.testScheduler.advanceTimeBy(50); h.settle()
+            assertTrue(h.state.blackScreen)
+        } finally { h.close() }
+    }
+
     @Test fun everyPlaybackVectorThroughResolverAndRealEngine() {
         val files = File(System.getProperty("fixtures")!!).listFiles()!!.filter { it.name.startsWith("playback-") }
         assertEquals(6, files.size)

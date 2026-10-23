@@ -76,6 +76,8 @@ class PlaybackEngine(
         var gain = 1f
         var token = 0L
         var awaitingAudio = false
+        /** Engine-clock time of the night's first audio; the screen turns black 10 s after it (#88). */
+        var firstAudioAtMs: Long? = null
         var consecutiveErrors = 0
         var nowPlaying: NowPlaying? = null
         var durationMs: Long = -1
@@ -110,16 +112,21 @@ class PlaybackEngine(
     private val portListener = object : PlayerPort.Listener {
         override fun onPlaying() {
             val s = callbackSession() ?: return
+            val firstAudio = s.firstAudioAtMs == null
+            if (firstAudio) s.firstAudioAtMs = clock.nowMs()
             val night = s.night
             if (night != null) {
-                if (!s.awaitingAudio || night.phase !in setOf("starting", "resuming")) return
+                if (!s.awaitingAudio || night.phase !in setOf("starting", "resuming")) {
+                    if (firstAudio) publish()
+                    return
+                }
                 s.awaitingAudio = false
                 if (!s.paused) envelope.rampTransport(1.0, VolumeEnvelope.RESUME_RAMP_MS)
                 val resumed = night.phase == "resuming"
                 night.apply(if (resumed) "resume" else "resolve", night.currentTrack, "ok")
                 if (!resumed) events.trackStarted(s.id, night.currentTrack)
                 publish()
-            }
+            } else if (firstAudio) publish()
             envelope.markPlaying(clock.nowMs())
             s.consecutiveErrors = 0
         }
@@ -722,7 +729,8 @@ class PlaybackEngine(
             tvOff = tvOffFor(s),
             clockNight = s.clock != null,
             sleepRouteStatus = mutableState.value.sleepRouteStatus,
-            blackScreen = now - s.startedAtMs >= BLACK_AFTER_MS,
+            blackScreen = now >= blackAtMs(s),
+            startingAudio = s.firstAudioAtMs == null,
             sessionId = s.id,
             track = s.nowPlaying,
             trackRemainingSec = if (duration > 0) ceilSeconds(duration - port.positionMs) else 0,
@@ -736,6 +744,16 @@ class PlaybackEngine(
     }
 
     private fun tvOffFor(s: Session): Boolean = s.clock == null && store.tvOff
+
+    /**
+     * Black 10 s after the night's first audio, so a slow first load never shows black silence (#88). A night
+     * that cannot play (online unavailable) is black 10 s after its start, and any night by a minute at the
+     * latest, so a paused or stalled first load never keeps the panel lit.
+     */
+    private fun blackAtMs(s: Session): Long = when {
+        s.night?.phase == "unavailable" -> s.startedAtMs + BLACK_AFTER_MS
+        else -> minOf(s.firstAudioAtMs?.plus(BLACK_AFTER_MS) ?: Long.MAX_VALUE, s.startedAtMs + BLACK_LATEST_MS)
+    }
 
     /** [durationMs] from [now], cut at a Clock night's window end when there is one. */
     private fun capped(durationMs: Long, now: Long, windowEndAtMs: Long?): Long =
@@ -797,6 +815,7 @@ class PlaybackEngine(
 
     companion object {
         const val BLACK_AFTER_MS = 10_000L
+        const val BLACK_LATEST_MS = 60_000L
         const val MAX_SLEEP_LATENESS_MS = 30_000L
         const val TICK_MS = 50L
         const val MAX_CONSECUTIVE_ERRORS = 3

@@ -31,6 +31,35 @@ class NightSessionTest {
         assertEquals(Phase.Playing, h.state.phase)
     }
 
+    @Test fun blackTenSecondsAfterTheMusicIsHeardNotAfterTheSessionStarts() {
+        // #88: a slow first load turned the screen black before anything was audible.
+        val h = EngineHarness()
+        h.port.reportPlayingOnPlay = false
+        h.launcherStart()
+        h.advance(12_000)
+        assertFalse(h.state.blackScreen)
+        assertTrue(h.state.startingAudio)
+        h.port.becomeAudible()
+        h.advance(9_950)
+        assertFalse(h.state.blackScreen)
+        assertFalse(h.state.startingAudio)
+        h.engine.pause(CommandSource.Remote)
+        h.advance(50)
+        assertTrue(h.state.blackScreen)
+    }
+
+    @Test fun aNightPausedBeforeItsFirstAudioIsBlackAfterAMinute() {
+        // #88: black follows the first audio, but a paused or stalled first load never keeps the panel lit.
+        val h = EngineHarness()
+        h.port.reportPlayingOnPlay = false
+        h.launcherStart()
+        h.engine.pause(CommandSource.Remote)
+        h.advance(59_950)
+        assertFalse(h.state.blackScreen)
+        h.advance(50)
+        assertTrue(h.state.blackScreen)
+    }
+
     @Test fun twoHoursContinueOnBlackThenStopBeforeOneSleepRequest() {
         val route = Route()
         val h = EngineHarness(sleepRoute = route)
