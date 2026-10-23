@@ -19,8 +19,8 @@ data class PlayableCollection(val tracks: List<Track>, val selection: List<Strin
 
 /**
  * The collection seam. Production uses DownloadCollectionSource for offline load and refresh.
- * `collection` is null until local load or first download succeeds; a launcher start that arrives
- * earlier waits for it, including through first-run failure and explicit retry.
+ * `collection` is null until local load or the first verified track of the first download (#83); a
+ * launcher start that arrives earlier waits for it, including through first-run failure and retry.
  */
 interface CollectionSource {
     val online: Boolean get() = false

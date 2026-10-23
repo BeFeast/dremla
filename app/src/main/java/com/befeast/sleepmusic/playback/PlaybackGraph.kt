@@ -74,6 +74,7 @@ class AppPlaybackGraph internal constructor(
     private val offlineDownloads by lazy {
         DownloadCollectionSource(
             app, scope, keepId = { engine.state.value.track?.id }, onError = { nightLog.collectionError() },
+            active = { !preferences.enabled },
         )
     }
 

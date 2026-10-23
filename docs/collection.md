@@ -10,10 +10,21 @@ Sleep routes and screensaver handling belong to #5; the finished download/menu v
 
 - Loading: read app-private `files/collection/manifest.json` on the IO dispatcher. If selected
   local files exist, publish them and Ready immediately, with no network request. Refresh is explicit.
-- First download: publish Downloading and per-file progress, retaining null `collection` until
-  the entire selection has downloaded and the manifest commits. Null keeps the engine's pending
-  launcher request waiting. FirstRunError keeps null and offers retry. The temporary placeholder
-  says what failed; OK retries. No exception text or network address appears in the UI.
+- First download: publish Downloading and per-file progress. Each selected track is published as
+  soon as it is verified, so a pending launcher request starts the night with the first tracks while
+  the rest downloads (#83). The manifest still commits only when the entire selection is on disk; an
+  unfinished first download leaves its verified tracks playable, and the next process publishes them
+  from the pending manifest before any request and resumes the download. Once tracks are published, a
+  failed first download reports RefreshError (OK pauses the playing night; the menu's refresh, the
+  automatic retries or the next process start complete it), and the night screen shows the player
+  rather than the download scene. While nothing is verified,
+  `collection` stays null and keeps the pending launcher request waiting. FirstRunError keeps null and
+  offers retry. The temporary placeholder says what failed; OK retries. No exception text or network
+  address appears in the UI.
+- Automatic retries: a failed first download or refresh is reported at once (FirstRunError or
+  RefreshError) and retried after 10 s, 30 s, 60 s, 2 min and 5 min (#83); a manual retry replaces the
+  scheduled one, and no retry runs while the listener plays the online catalog. Files verified in this
+  process are not re-hashed on a retry.
 - Refresh: keep the current playable collection throughout Downloading. Publish the new selection
   only after success. RefreshError leaves the old collection and active playback alone; #6 can
   render the non-blocking notice and call `refresh()` from its menu.
@@ -41,7 +52,7 @@ Every selected track requires a 64-digit SHA-256. Local filenames contain valida
 hashes and extensions; new revisions cannot overwrite files used by the old manifest or player.
 Downloads overwrite `.part` files, stream until EOF, calculate SHA-256, check the manifest size when
 present, and rename only verified files. No Range or Content-Length is required. Already verified
-complete files are rehashed and reused, so a killed process retries only unfinished files from byte
+complete files are rehashed (except those verified earlier in the same process, #83) and reused, so a killed process retries only unfinished files from byte
 zero. A bad digest is removed; a caught IO failure removes its `.part`; process death can leave one for whole-file retry.
 
 Before downloading, the validated refresh manifest is saved atomically as `manifest.pending.json`.
@@ -57,7 +68,7 @@ A successful commit removes the pending manifest. The next process startup prune
 against both manifests before publishing
 any collection, when no playback session can yet select a file. Failed downloads,
 manifest writes and renames preserve the prior manifest and its audio. The Library.kt change record
-in `kit-port.sha256` names the latest deliberate Library change (#81; the earlier #4 change is in git
+in `kit-port.sha256` names the latest deliberate Library change (#83; the earlier #4 and #81 changes are in git
 history); LibraryTest is unchanged.
 
 ## Private night journal

@@ -33,6 +33,13 @@ class NightSceneTest {
         compose.setContent { NightScene(playing) }
         compose.onRoot().captureGolden("night-player.png")
     }
+    @Test fun aNightPlayingTheFirstTracksShowsThePlayerWhileTheRestDownloads() {
+        // #83: a first night starts on the first verified tracks; the download scene is for waiting only.
+        compose.setContent { NightScene(playing.copy(collectionLoaded = true),
+            CollectionStatus(CollectionPhase.Downloading, Library.Progress(3, 47, 1, 2, "x"))) }
+        compose.onNodeWithText("Remember Eternity 07").assertExists()
+        compose.onNodeWithText("Downloading the collection").assertDoesNotExist()
+    }
     @Test fun longTitle() {
         compose.setContent { NightScene(playing.copy(track = playing.track!!.copy(
             title = "Whatever Happened to Peter Roe?, Part 1", artist = "TRG Banks", category = "Ambient"), timerRemainingSec = 1380)) }

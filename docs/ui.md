@@ -12,7 +12,7 @@ No second player, timer, downloader or sleep action exists in the UI.
 | Menu | Explicit long OK; hides player, contains timer tiles and five action rows |
 | Download | Loading or downloading, including explicit refresh; byte progress, file count |
 | First-run error | Connection notice and focused Retry calling refresh |
-| Refresh error | Existing collection retained; non-blocking notice in menu |
+| Refresh error | Existing collection retained; non-blocking notice in menu. Also an unfinished first download whose verified tracks already play (#83) |
 | Black | Engine blackScreen after ten seconds; all content suppressed |
 | Finished | Finished or closeActivity; all content suppressed, even an open menu |
 

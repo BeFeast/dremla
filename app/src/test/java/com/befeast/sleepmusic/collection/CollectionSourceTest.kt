@@ -263,6 +263,107 @@ class CollectionSourceTest {
         assertEquals(listOf(good.name, bad.name), hashed)
     }
 
+    @Test fun firstRunPlaysTheVerifiedTracksAndRetriesADroppedOneAutomatically() = CollectionFixture().use { server ->
+        // #83: one dropped track used to leave the first run with no music and no automatic retry.
+        val a = byteArrayOf(1); val b = byteArrayOf(2, 2); val c = byteArrayOf(3, 3, 3)
+        server.manifest(listOf("a", "b", "c"), mapOf("a" to a, "b" to b, "c" to c))
+        server.routes["/audio/b.opus"] = CollectionFixture.Response(b.copyOf(1))
+        val hashed = mutableListOf<String>()
+        var published: DownloadCollectionSource? = null
+        var seenWhileCDownloads: List<String>? = null
+        val library = com.befeast.sleepmusic.Library(app, openOutput = { file ->
+            if (file.name.startsWith("c.")) seenWhileCDownloads = published?.collection?.value?.ids
+            file.outputStream()
+        }, hashFile = { hashed += it.name; CollectionFixture.sha(it.readBytes()) })
+        val source = DownloadCollectionSource(app, scope, dispatcher, server.base, library = library, retryDelaysMs = listOf(10_000L))
+        published = source
+        val clock = Clock { scope.testScheduler.currentTime }
+        val calls = mutableListOf<String>()
+        val port = FakePlayerPort(clock, calls)
+        val engine = PlaybackEngine(scope, clock, port, FakeAudioControl(calls), InMemoryPlaybackStore(), source, RecordingHost(calls))
+        engine.onUiEntry(EngineHarness.LAUNCHER)
+        settle()
+        assertEquals("published while the rest still downloads", listOf("a"), seenWhileCDownloads)
+        assertEquals(listOf("a", "c"), source.collection.value!!.ids)
+        assertEquals(CollectionPhase.RefreshError, source.status.value.phase)
+        assertTrue(port.started.single() in setOf("a", "c"))
+        assertTrue(engine.state.value.isActive)
+        assertNull(com.befeast.sleepmusic.Library(app).loadLocal())
+        server.routes["/audio/b.opus"] = CollectionFixture.Response(b)
+        scope.testScheduler.advanceTimeBy(10_000); settle()
+        assertEquals(listOf("a", "b", "c"), source.collection.value!!.ids)
+        assertEquals(CollectionPhase.Ready, source.status.value.phase)
+        assertTrue(engine.state.value.isActive)
+        assertEquals(1, server.requests.count { it == "/audio/a.opus" })
+        assertEquals(2, server.requests.count { it == "/audio/b.opus" })
+        assertEquals(1, server.requests.count { it == "/audio/c.opus" })
+        assertEquals(emptyList<String>(), hashed)
+        assertNotNull(com.befeast.sleepmusic.Library(app).loadLocal())
+        engine.stop(CommandSource.System)
+    }
+
+    @Test fun anUnfinishedFirstRunStaysPlayableAndANewProcessPublishesItWithoutTheServer() = CollectionFixture().use { server ->
+        val a = byteArrayOf(1); val b = byteArrayOf(2, 2)
+        server.manifest(listOf("a", "b"), mapOf("a" to a, "b" to b))
+        server.routes["/audio/b.opus"] = CollectionFixture.Response(b.copyOf(1))
+        val source = DownloadCollectionSource(app, scope, dispatcher, server.base, retryDelaysMs = listOf(1_000L))
+        settle()
+        assertEquals(listOf("a"), source.collection.value!!.ids)
+        scope.testScheduler.advanceTimeBy(1_000); settle()
+        scope.testScheduler.advanceTimeBy(60_000); settle()
+        assertEquals(2, server.requests.count { it == "/audio/b.opus" })
+        assertEquals(listOf("a"), source.collection.value!!.ids)
+        assertEquals(CollectionPhase.RefreshError, source.status.value.phase)
+        server.routes.clear()
+        val restarted = DownloadCollectionSource(app, scope, dispatcher, server.base, retryDelaysMs = emptyList()); settle()
+        assertEquals(listOf("a"), restarted.collection.value!!.ids)
+        assertEquals(CollectionPhase.RefreshError, restarted.status.value.phase)
+        server.manifest(listOf("a", "b"), mapOf("a" to a, "b" to b))
+        restarted.refresh(); settle()
+        assertEquals(listOf("a", "b"), restarted.collection.value!!.ids)
+        assertEquals(CollectionPhase.Ready, restarted.status.value.phase)
+        assertEquals(1, server.requests.count { it == "/audio/a.opus" })
+    }
+
+    @Test fun aDroppedRefreshKeepsTheOldCollectionAndIsRetriedAutomatically() = CollectionFixture().use { server ->
+        val a = byteArrayOf(1); val b = byteArrayOf(2, 2); val c = byteArrayOf(3, 3, 3)
+        server.manifest(listOf("a"), mapOf("a" to a))
+        val source = DownloadCollectionSource(app, scope, dispatcher, server.base, retryDelaysMs = listOf(1_000L)); settle()
+        server.manifest(listOf("b", "c"), mapOf("b" to b, "c" to c))
+        server.routes["/audio/c.opus"] = CollectionFixture.Response(c.copyOf(1))
+        source.refresh(); settle()
+        assertEquals(listOf("a"), source.collection.value!!.ids)
+        assertEquals(CollectionPhase.RefreshError, source.status.value.phase)
+        server.routes["/audio/c.opus"] = CollectionFixture.Response(c)
+        scope.testScheduler.advanceTimeBy(1_000); settle()
+        assertEquals(listOf("b", "c"), source.collection.value!!.ids)
+        assertEquals(CollectionPhase.Ready, source.status.value.phase)
+    }
+
+    @Test fun aManualRetryReplacesTheScheduledOne() = CollectionFixture().use { server ->
+        val source = DownloadCollectionSource(app, scope, dispatcher, server.base, retryDelaysMs = listOf(1_000L)); settle()
+        assertEquals(CollectionPhase.FirstRunError, source.status.value.phase)
+        server.manifest(listOf("a"), mapOf("a" to byteArrayOf(1)))
+        source.refresh(); settle()
+        assertEquals(CollectionPhase.Ready, source.status.value.phase)
+        val count = server.requests.size
+        scope.testScheduler.advanceTimeBy(60_000); settle()
+        assertEquals(count, server.requests.size)
+    }
+
+    @Test fun noAutomaticRetryWhileTheOnlineCatalogPlays() = CollectionFixture().use { server ->
+        var offline = true
+        val source = DownloadCollectionSource(app, scope, dispatcher, server.base, retryDelaysMs = listOf(1_000L), active = { offline })
+        settle()
+        assertEquals(CollectionPhase.FirstRunError, source.status.value.phase)
+        offline = false
+        server.manifest(listOf("a"), mapOf("a" to byteArrayOf(1)))
+        val count = server.requests.size
+        scope.testScheduler.advanceTimeBy(60_000); settle()
+        assertEquals(count, server.requests.size)
+        assertNull(source.collection.value)
+    }
+
     @Test fun interruptedFirstRunRetainsVerifiedFilesOnRestart() = CollectionFixture().use { server ->
         server.manifest(listOf("b", "c"), mapOf("b" to byteArrayOf(2), "c" to byteArrayOf(3)))
         interruptDuringC(server)

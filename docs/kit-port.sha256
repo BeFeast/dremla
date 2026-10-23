@@ -17,8 +17,8 @@
 5473470f7ba10dad68e5d9f900f3a2631fd487761b6a15f0a1598a317aa00525  app/src/main/assets/licenses/OFL-Archivo.txt
 6f5d92514f189c0643eb5bd7f4da60508d7d93d37528c9b1f6484c3c25c66753  app/src/main/assets/licenses/OFL-Inter.txt
 89f7388a8c577a329b1ea0a26599343e3f42729b799b398785e83b48a1053c6b  app/src/main/java/com/befeast/sleepmusic/Fades.kt
-# was b9cfde6e2b06559d6bcffb7946db4018ee5e358d4b106dd472ded27e6744b6b3 (#81)
-6ca4dfb1156c9df7b9c396468603201138838545738df0085bd0812d96ff5353  app/src/main/java/com/befeast/sleepmusic/Library.kt
+# was b9cfde6e2b06559d6bcffb7946db4018ee5e358d4b106dd472ded27e6744b6b3 (#83)
+afa9404dc62c1e222399d1a9e8d739994f4ac0655306419fe1502f5c8063fe05  app/src/main/java/com/befeast/sleepmusic/Library.kt
 c7fc1119b286387a044a5d64ee3c7ad18ed4c4ee74d87ddf6bb745f826755f4b  app/src/main/java/com/befeast/sleepmusic/ShuffleBag.kt
 793e60fbd810e9466ecb19d6004141de10f33c9864ade125e67918a252972be5  app/src/main/java/com/befeast/sleepmusic/StartVolume.kt
 9744442d0f47bd826ca9d419cfbf66717145b7d28a45e9fe7cd32e7a8e4d5f2a  app/src/main/java/com/befeast/sleepmusic/ui/BrandTheme.kt

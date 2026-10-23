@@ -34,11 +34,15 @@ class PlayQueue(private val bag: ShuffleBag, private val store: PlaybackStore) {
         return next
     }
 
-    /** Redraws the lookahead if it is no longer eligible (or missing while something is). True if it changed. */
+    /**
+     * Redraws the lookahead if it is no longer eligible (or missing while something is), or if it repeats the
+     * current track while another is eligible: a night that began on a one-track set while the first download
+     * was still running (#83). True if it changed.
+     */
     fun revalidate(eligible: List<String>): Boolean {
-        if (current == null) return false
+        val now = current ?: return false
         val before = upNext
-        if (before != null && before.id in eligible) return false
+        if (before != null && before.id in eligible && !(before.id == now.id && eligible.any { it != now.id })) return false
         upNext = draw(eligible)
         return upNext != before
     }

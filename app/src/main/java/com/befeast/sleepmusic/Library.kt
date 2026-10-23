@@ -78,6 +78,8 @@ class Library internal constructor(
     private var fixtureMode = false
     private val manifestFile = File(dir, "manifest.json")
     private val pendingManifest = AtomicFile(File(dir, "manifest.pending.json"))
+    /** Files this process verified; a retry skips them without re-hashing (#83). */
+    private val verifiedHere = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     data class Progress(
         val fileIndex: Int,
@@ -112,11 +114,7 @@ class Library internal constructor(
      * re-reads the collection before it can play (#81). A track without a listed size falls back to its digest.
      */
     internal fun pruneBeforePublication(manifest: Manifest?) {
-        // Pending state is advisory: malformed or unreadable state cannot invalidate the commit.
-        val pending = runCatching {
-            ManifestParser.parse(pendingManifest.openRead().use { it.readBytes().toString(Charsets.UTF_8) })
-                .also { selectedTracks(it, true) }
-        }.getOrNull()
+        val pending = loadPending()
         val wanted = listOfNotNull(manifest, pending).flatMap { m ->
             m.tracks.filter { it.id in m.selection.orEmpty() }.mapNotNull { t ->
                 runCatching {
@@ -128,6 +126,15 @@ class Library internal constructor(
         }.toSet()
         audioDir.listFiles()?.forEach { if (it.name !in wanted) it.delete() }
     }
+
+    /**
+     * The validated manifest of an unfinished download, or null. Pending state is advisory: malformed or
+     * unreadable state cannot invalidate the commit.
+     */
+    fun loadPending(): Manifest? = runCatching {
+        ManifestParser.parse(pendingManifest.openRead().use { it.readBytes().toString(Charsets.UTF_8) })
+            .also { selectedTracks(it, true) }
+    }.getOrNull()
 
     private fun selectedTracks(manifest: Manifest, selectionOnly: Boolean): List<Track> {
         val selected = if (selectionOnly) {
@@ -154,8 +161,16 @@ class Library internal constructor(
     /**
      * Blocking: call from Dispatchers.IO. Downloads <base>/manifest.json and every track file,
      * verifying sha256. Already-verified local files are kept. Throws if the manifest is unreachable.
+     * [onVerified] runs after each selected track is on disk and verified (#83).
      */
-    fun refresh(baseUrl: String, keepId: String?, selectionOnly: Boolean = false, playingId: () -> String? = { keepId }, onProgress: (Progress) -> Unit): RefreshResult {
+    fun refresh(
+        baseUrl: String,
+        keepId: String?,
+        selectionOnly: Boolean = false,
+        playingId: () -> String? = { keepId },
+        onVerified: (Manifest) -> Unit = {},
+        onProgress: (Progress) -> Unit,
+    ): RefreshResult {
         val base = URL(if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/")
         fixtureMode = base.host == "127.0.0.1"
         val manifestJson = String(fetchBytes(URL(base, "manifest.json")), Charsets.UTF_8)
@@ -180,30 +195,33 @@ class Library internal constructor(
         selected.forEachIndexed { i, t ->
             onProgress(Progress(i + 1, selected.size, done, total, t.title))
             val dst = localFile(t)
-            try {
-                if (dst.isFile && (t.bytes <= 0 || dst.length() == t.bytes) && sha256(dst) == t.sha256) {
+            val verified = try {
+                if (dst.isFile && (t.bytes <= 0 || dst.length() == t.bytes) && (dst.name in verifiedHere || sha256(dst) == t.sha256)) {
                     done += t.bytes.coerceAtLeast(0)
-                    ok++
-                    return@forEachIndexed
+                } else {
+                    val tmp = File(audioDir, dst.name + ".part")
+                    val startDone = done
+                    val digest = download(URL(base, t.file), tmp) { n ->
+                        onProgress(Progress(i + 1, selected.size, startDone + n, total, t.title))
+                    }
+                    if (digest != t.sha256 || (t.bytes > 0 && tmp.length() != t.bytes)) {
+                        tmp.delete()
+                        throw IOException("sha256 mismatch for ${t.id}: got $digest")
+                    }
+                    if (!tmp.renameTo(dst)) throw IOException("rename failed for ${t.id}")
+                    done = startDone + t.bytes.coerceAtLeast(0)
                 }
-                val tmp = File(audioDir, dst.name + ".part")
-                val startDone = done
-                val digest = download(URL(base, t.file), tmp) { n ->
-                    onProgress(Progress(i + 1, selected.size, startDone + n, total, t.title))
-                }
-                if (digest != t.sha256 || (t.bytes > 0 && tmp.length() != t.bytes)) {
-                    tmp.delete()
-                    throw IOException("sha256 mismatch for ${t.id}: got $digest")
-                }
-                if (!tmp.renameTo(dst)) throw IOException("rename failed for ${t.id}")
-                done = startDone + t.bytes.coerceAtLeast(0)
+                verifiedHere += dst.name
                 ok++
+                true
             } catch (e: Exception) {
                 File(audioDir, dst.name + ".part").delete()
                 Log.w(TAG, "track ${t.id} failed: ${e.message}")
                 failed += t.id
                 done += t.bytes.coerceAtLeast(0)
+                false
             }
+            if (verified) onVerified(manifest)
         }
         onProgress(Progress(selected.size, selected.size, total, total, ""))
 

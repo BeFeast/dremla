@@ -16,6 +16,17 @@ class PlayQueueTest {
     private val ids = (1..8).map { "amb-%03d".format(it) }
 
     @Test
+    fun aRepeatQueuedFromAOneTrackSetIsRedrawnWhenMoreTracksArrive() {
+        // #83: a first night can begin on the first verified track while the rest still downloads.
+        val queue = PlayQueue(ShuffleBag(Random(3)), InMemoryPlaybackStore())
+        assertEquals("a", queue.begin(listOf("a"))!!.id)
+        assertEquals("a", queue.upNext!!.id)
+        assertTrue(queue.revalidate(listOf("a", "b")))
+        assertEquals("b", queue.upNext!!.id)
+        assertFalse(queue.revalidate(listOf("a", "b", "c")))
+    }
+
+    @Test
     fun lookaheadIsNotCommittedUntilItStarts() {
         val store = InMemoryPlaybackStore()
         val queue = PlayQueue(ShuffleBag(Random(3)), store)

@@ -53,7 +53,8 @@ fun NightScene(
                 Label(if (session.playableCount == 0) "A valid catalog is needed. Open the menu to change source." else "Try a new launcher start. The sleep timer is still running.", type.Caption)
             }
             Hints(listOf("hold OK" to "menu"), type)
-        } else if (status?.phase in listOf(CollectionPhase.Loading, CollectionPhase.Downloading, CollectionPhase.FirstRunError)) {
+        } else if (session.track == null && status?.phase in listOf(CollectionPhase.Loading, CollectionPhase.Downloading, CollectionPhase.FirstRunError)) {
+            // A night that plays the first verified tracks shows the player while the rest downloads (#83).
             DownloadScene(session.collectionLoaded, status!!, type, onRefresh, onOpenMenu)
             Hints(listOf("hold OK" to "menu"), type)
         } else if (session.track != null) {
