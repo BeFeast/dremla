@@ -46,14 +46,19 @@ zero. A bad digest is removed; a caught IO failure removes its `.part`; process 
 
 Before downloading, the validated refresh manifest is saved atomically as `manifest.pending.json`.
 A partial download does not commit a manifest. Completed files remain for the next retry, including
-after process death on first run or during refresh. Startup retains files verified against either
-the committed or pending selection; corrupt or unreadable pending state is treated as absent. The
+after process death on first run or during refresh. Startup retains files of either the committed or
+pending selection by revisioned name and listed size, without hashing them: a file gets its
+`ID.SHA256.ext` name only after its digest was verified, and re-hashing the whole collection delayed
+the first sound of every cold start (#81). A track without a listed size is kept only by its digest;
+a track without a valid SHA-256 has no revisioned name and its file is removed. Corrupt or
+unreadable pending state is treated as absent. The
 manifest is written to its own `.part`, and a failed rename is an error. Production refresh never prunes audio: an idle observation can race a launcher start.
 A successful commit removes the pending manifest. The next process startup prunes obsolete revisions
 against both manifests before publishing
 any collection, when no playback session can yet select a file. Failed downloads,
-manifest writes and renames preserve the prior manifest and its audio. The `#4` provenance record
-in `kit-port.sha256` records the deliberate Library change; LibraryTest is unchanged.
+manifest writes and renames preserve the prior manifest and its audio. The Library.kt change record
+in `kit-port.sha256` names the latest deliberate Library change (#81; the earlier #4 change is in git
+history); LibraryTest is unchanged.
 
 ## Private night journal
 

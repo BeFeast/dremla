@@ -69,6 +69,8 @@ object ManifestParser {
 class Library internal constructor(
     context: Context,
     private val openOutput: (File) -> java.io.OutputStream = { it.outputStream() },
+    /** Tests see every whole-file hash (#81); production hashes the file itself. */
+    private val hashFile: ((File) -> String)? = null,
     private val commitManifest: (File, File) -> Boolean = { from, to -> from.renameTo(to) },
 ) {
     private val dir = File(context.filesDir, "collection")
@@ -100,11 +102,15 @@ class Library internal constructor(
         require(t.id.matches(Regex("[A-Za-z0-9_-]+"))) { "invalid track id" }
         val extension = t.file.substringAfterLast('.', "opus")
         require(extension.matches(Regex("[A-Za-z0-9]+"))) { "invalid extension" }
-        val revision = if (t.sha256.matches(Regex("[a-f0-9]{64}"))) ".${t.sha256}" else ""
+        val revision = if (t.sha256.matches(SHA256)) ".${t.sha256}" else ""
         return File(audioDir, "${t.id}$revision.$extension")
     }
 
-    /** Only before any collection is exposed in a new process; never during a refresh. */
+    /**
+     * Only before any collection is exposed in a new process; never during a refresh. Name and size only:
+     * a file gets its revisioned name (ID.SHA256.ext) after its sha256 was verified, so a cold start never
+     * re-reads the collection before it can play (#81). A track without a listed size falls back to its digest.
+     */
     internal fun pruneBeforePublication(manifest: Manifest?) {
         // Pending state is advisory: malformed or unreadable state cannot invalidate the commit.
         val pending = runCatching {
@@ -114,7 +120,9 @@ class Library internal constructor(
         val wanted = listOfNotNull(manifest, pending).flatMap { m ->
             m.tracks.filter { it.id in m.selection.orEmpty() }.mapNotNull { t ->
                 runCatching {
-                    localFile(t).takeIf { it.isFile && (t.bytes <= 0 || it.length() == t.bytes) && sha256(it) == t.sha256 }?.name
+                    localFile(t).takeIf {
+                        t.sha256.matches(SHA256) && it.isFile && if (t.bytes > 0) it.length() == t.bytes else sha256(it) == t.sha256
+                    }?.name
                 }.getOrNull()
             }
         }.toSet()
@@ -131,7 +139,7 @@ class Library internal constructor(
         } else manifest.tracks
         if (manifest.tracks.map { it.id }.distinct().size != manifest.tracks.size) throw IOException("duplicate ids")
         selected.forEach { t ->
-            if (!t.sha256.matches(Regex("[a-f0-9]{64}"))) throw IOException("missing or invalid sha256")
+            if (!t.sha256.matches(SHA256)) throw IOException("missing or invalid sha256")
             localFile(t)
         }
         return selected
@@ -284,6 +292,7 @@ class Library internal constructor(
     }
 
     private fun sha256(f: File): String {
+        hashFile?.let { return it(f) }
         val md = MessageDigest.getInstance("SHA-256")
         f.inputStream().use { input ->
             val buf = ByteArray(64 * 1024)
@@ -311,6 +320,7 @@ class Library internal constructor(
         }
 
         const val TAG = "SleepMusic"
+        private val SHA256 = Regex("[a-f0-9]{64}")
         const val MAX_REDIRECTS = 5
         private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
 

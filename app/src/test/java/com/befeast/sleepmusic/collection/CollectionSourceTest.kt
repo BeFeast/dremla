@@ -188,8 +188,11 @@ class CollectionSourceTest {
         source(server); settle()
         server.manifest(listOf("a", "b", "c"), mapOf("a" to byteArrayOf(1), "b" to byteArrayOf(2), "c" to byteArrayOf(3)))
         interruptDuringC(server)
-        val restarted = source(server); settle()
+        val hashed = mutableListOf<String>()
+        val library = com.befeast.sleepmusic.Library(app, hashFile = { hashed += it.name; CollectionFixture.sha(it.readBytes()) })
+        val restarted = DownloadCollectionSource(app, scope, dispatcher, server.base, library = library); settle()
         assertEquals(listOf("a"), restarted.collection.value!!.ids)
+        assertEquals(emptyList<String>(), hashed) // #81: the pending selection's verified b is kept unhashed too
         restarted.refresh(); settle()
         assertEquals(listOf("a", "b", "c"), restarted.collection.value!!.ids)
         assertEquals(1, server.requests.count { it == "/audio/a.opus" })
@@ -203,6 +206,61 @@ class CollectionSourceTest {
         assertEquals(listOf("a", "b", "c"), committed.collection.value!!.ids)
         assertFalse(orphan.exists())
         assertEquals(count, server.requests.size)
+    }
+
+    @Test fun coldStartPublishesTheVerifiedCollectionWithoutHashingItsAudio() = CollectionFixture().use { server ->
+        // #81: a cold start re-hashed every selected file (542 MB on the SEI) before anything could play.
+        server.manifest(listOf("a", "b", "c"), mapOf("a" to byteArrayOf(1), "b" to byteArrayOf(2, 2), "c" to byteArrayOf(3, 3, 3)))
+        source(server); settle()
+        val count = server.requests.size
+        val audio = java.io.File(app.filesDir, "collection/audio")
+        val truncated = audio.listFiles()!!.single { it.name.startsWith("c.") }.apply { writeBytes(byteArrayOf(3)) }
+        val orphan = java.io.File(audio, "old.${"0".repeat(64)}.opus").apply { writeBytes(byteArrayOf(9)) }
+        val part = java.io.File(audio, "${truncated.name}.part").apply { writeBytes(byteArrayOf(8)) }
+        val hashed = mutableListOf<String>()
+        val library = com.befeast.sleepmusic.Library(app, hashFile = { hashed += it.name; error("cold start hashed ${it.name}") })
+        val restarted = DownloadCollectionSource(app, scope, dispatcher, server.base, library = library); settle()
+        assertEquals(emptyList<String>(), hashed)
+        assertEquals(CollectionPhase.Ready, restarted.status.value.phase)
+        assertEquals(listOf("a", "b"), restarted.collection.value!!.ids)
+        assertFalse(truncated.exists())
+        assertFalse(orphan.exists())
+        assertFalse(part.exists())
+        assertEquals(count, server.requests.size)
+    }
+
+    @Test fun aFileWithoutAVerifiedRevisionNameIsNeverPublishedFromStartup() = CollectionFixture().use { server ->
+        // The name+size rule (#81) holds only for ID.SHA256.ext names; a track without a valid sha256 maps to ID.ext.
+        val dir = java.io.File(app.filesDir, "collection")
+        java.io.File(dir, "audio").mkdirs()
+        java.io.File(dir, "manifest.json").writeText(
+            """{"version":1,"tracks":[{"id":"a","file":"audio/a.opus","bytes":3,"sha256":""}],"selection":["a"]}""")
+        val unverified = java.io.File(dir, "audio/a.opus").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val hashed = mutableListOf<String>()
+        val library = com.befeast.sleepmusic.Library(app, hashFile = { hashed += it.name; CollectionFixture.sha(it.readBytes()) })
+        val source = DownloadCollectionSource(app, scope, dispatcher, server.base, library = library); settle()
+        assertFalse(unverified.exists())
+        assertNull(source.collection.value)
+        assertEquals(CollectionPhase.FirstRunError, source.status.value.phase)
+        assertEquals(emptyList<String>(), hashed)
+    }
+
+    @Test fun aTrackWithoutAListedSizeIsKeptOnlyByItsDigest() = CollectionFixture().use { server ->
+        val body = byteArrayOf(4, 5, 6)
+        val sha = CollectionFixture.sha(body)
+        val dir = java.io.File(app.filesDir, "collection")
+        java.io.File(dir, "audio").mkdirs()
+        java.io.File(dir, "manifest.json").writeText(
+            """{"version":1,"tracks":[{"id":"a","file":"audio/a.opus","sha256":"$sha"},{"id":"b","file":"audio/b.opus","sha256":"$sha"}],"selection":["a","b"]}""")
+        val good = java.io.File(dir, "audio/a.$sha.opus").apply { writeBytes(body) }
+        val bad = java.io.File(dir, "audio/b.$sha.opus").apply { writeBytes(byteArrayOf(9, 9, 9)) }
+        val hashed = mutableListOf<String>()
+        val library = com.befeast.sleepmusic.Library(app, hashFile = { hashed += it.name; CollectionFixture.sha(it.readBytes()) })
+        val source = DownloadCollectionSource(app, scope, dispatcher, server.base, library = library); settle()
+        assertTrue(good.exists())
+        assertFalse(bad.exists())
+        assertEquals(listOf("a"), source.collection.value!!.ids)
+        assertEquals(listOf(good.name, bad.name), hashed)
     }
 
     @Test fun interruptedFirstRunRetainsVerifiedFilesOnRestart() = CollectionFixture().use { server ->
