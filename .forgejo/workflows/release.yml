@@ -1,0 +1,123 @@
+# Manual release only. Step budgets total 66 minutes; job budget 75 leaves cleanup margin.
+# Capacity 1 / trusted host only; see docs/release-signing.md for host-mode isolation limits.
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Reviewed main commit (40 hex digits)
+        required: true
+        type: string
+      version_name:
+        description: SemVer versionName
+        required: true
+        default: '0.1.0'
+        type: string
+      version_code:
+        description: Positive Android versionCode
+        required: true
+        default: '1'
+        type: string
+permissions:
+  contents: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: heavy
+    timeout-minutes: 75
+    env:
+      DREMLA_GRADLE_MAX_WORKERS: '4'
+      DREMLA_SOURCE_SHA: ${{ inputs.source_sha }}
+      DREMLA_VERSION_NAME: ${{ inputs.version_name }}
+      DREMLA_VERSION_CODE: ${{ inputs.version_code }}
+      RELEASE_SIGNING_CERT_SHA256: ${{ vars.RELEASE_SIGNING_CERT_SHA256 }}
+      DREMLA_FORGE_URL: ${{ github.server_url }}
+      DREMLA_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Checkout main and its complete history
+        timeout-minutes: 3
+        uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate inputs and select the reviewed source
+        timeout-minutes: 2
+        run: |
+          set +x
+          # Validation happens before any user input is passed to git or the environment file.
+          python3 -I scripts/release-tools.py inputs
+          git merge-base --is-ancestor "$DREMLA_SOURCE_SHA" refs/remotes/origin/main
+          git checkout --detach "$DREMLA_SOURCE_SHA"
+      - name: Check release tag availability
+        timeout-minutes: 1
+        env:
+          DREMLA_RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +x
+          python3 -I scripts/release-tools.py preflight
+      - name: Check runner tools
+        timeout-minutes: 1
+        run: |
+          [[ -x "$JAVA_HOME/bin/java" ]]
+          java_version="$("$JAVA_HOME/bin/java" -version 2>&1)"
+          [[ "$java_version" == *'version "17'* ]]
+          [[ -f "$ANDROID_HOME/platforms/android-34/android.jar" ]]
+          for tool in aapt2 apksigner zipalign; do
+            [[ -x "$ANDROID_HOME/build-tools/34.0.0/$tool" ]]
+          done
+          for tool in python3 curl jq sha256sum; do
+            command -v "$tool" >/dev/null
+          done
+      - name: Verify source with release versions (build, unit, golden, lint, inspection)
+        timeout-minutes: 40
+        run: DREMLA_OUTCOME_SCOPE=repo nice -n 19 scripts/verify-outcome.sh
+      - name: Create signing directory
+        timeout-minutes: 1
+        env:
+          RUNNER_TEMP_CONTEXT: ${{ runner.temp }}
+        run: RUNNER_TEMP="${RUNNER_TEMP:-$RUNNER_TEMP_CONTEXT}" scripts/signing-dir-create.sh
+      - name: Resolve signing material through Universal Auth
+        timeout-minutes: 5
+        env:
+          INFISICAL_API_URL: ${{ vars.INFISICAL_API_URL }}
+          INFISICAL_PROJECT_ID: ${{ vars.INFISICAL_PROJECT_ID }}
+          INFISICAL_CLIENT_ID: ${{ secrets.INFISICAL_CLIENT_ID }}
+          INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+        run: scripts/resolve-signing.sh
+      - name: Align, sign and verify the final APK
+        timeout-minutes: 3
+        run: |
+          set +x
+          export PATH="$JAVA_HOME/bin:$PATH"
+          [[ "$(scripts/signing-cert-digest.sh)" == "$RELEASE_SIGNING_CERT_SHA256" ]]
+          sdk="$ANDROID_HOME/build-tools/34.0.0"
+          mkdir -p release-out
+          apk="release-out/dremla-$DREMLA_VERSION_NAME.apk"
+          "$sdk/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk release-out/aligned.apk
+          "$sdk/apksigner" sign --ks "$DREMLA_SIGNING_DIR/release.p12" \
+            --ks-key-alias dremla-release --ks-pass "file:$DREMLA_SIGNING_DIR/storepass" \
+            --key-pass "file:$DREMLA_SIGNING_DIR/keypass" --out "$apk" release-out/aligned.apk \
+            >/dev/null 2>&1 || { echo 'APK signing failed' >&2; exit 1; }
+          "$sdk/apksigner" verify --print-certs -Werr "$apk"
+          "$sdk/zipalign" -c -p 4 "$apk"
+          DREMLA_APK="$apk" DREMLA_APK_REQUIRE_SIGNED=1 scripts/inspect-apk.sh
+      - name: Create tag and draft, upload both assets, then publish
+        timeout-minutes: 9
+        env:
+          DREMLA_RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +x
+          python3 -I scripts/release-tools.py publish
+      - name: Remove signing material
+        if: always()
+        timeout-minutes: 1
+        env:
+          RUNNER_TEMP_CONTEXT: ${{ runner.temp }}
+        run: RUNNER_TEMP="${RUNNER_TEMP:-$RUNNER_TEMP_CONTEXT}" scripts/signing-dir-remove.sh

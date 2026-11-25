@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Deliberately no INTERNET permission or launcher: dexing proof only. -->
+    <application android:allowBackup="false" android:label="Resolver proof">
+        <activity android:name=".ProofActivity" android:exported="false" />
+    </application>
+</manifest>

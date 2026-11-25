@@ -1,0 +1,80 @@
+{
+  "schema": "dremla.catalog/1",
+  "version": 2,
+  "generated": "2026-10-20T19:00:00Z",
+  "tracks": [
+    {
+      "id": "yt-fxAmbient01",
+      "source": {
+        "kind": "youtube",
+        "videoId": "fxAmbient01",
+        "url": "https://www.youtube.com/watch?v=fxAmbient01"
+      },
+      "title": "Still Lantern",
+      "artist": "Fixture Ensemble",
+      "category": "ambient",
+      "durationSec": 90
+    },
+    {
+      "id": "yt-fxPiano0001",
+      "source": {
+        "kind": "youtube",
+        "videoId": "fxPiano0001",
+        "url": "https://www.youtube.com/watch?v=fxPiano0001"
+      },
+      "title": "Paper Moonlight",
+      "artist": "Fixture Ensemble",
+      "category": "piano",
+      "durationSec": 90,
+      "gainDb": -3.0
+    },
+    {
+      "id": "yt-fxRain00001",
+      "source": {
+        "kind": "youtube",
+        "videoId": "fxRain00001",
+        "url": "https://www.youtube.com/watch?v=fxRain00001"
+      },
+      "title": "Rain Window",
+      "artist": "Fixture Ensemble",
+      "category": "ambient",
+      "durationSec": 3600
+    },
+    {
+      "id": "yt-fxFail00001",
+      "source": {
+        "kind": "youtube",
+        "videoId": "fxFail00001",
+        "url": "https://www.youtube.com/watch?v=fxFail00001"
+      },
+      "title": "Missing Lantern",
+      "artist": "Fixture Ensemble",
+      "category": "ambient",
+      "durationSec": 90
+    }
+  ],
+  "playlists": [
+    {
+      "id": "night",
+      "title": "Night",
+      "trackIds": [
+        "yt-fxAmbient01",
+        "yt-fxPiano0001"
+      ]
+    },
+    {
+      "id": "long-night",
+      "title": "Long night",
+      "trackIds": [
+        "yt-fxAmbient01",
+        "yt-fxRain00001",
+        "yt-fxPiano0001",
+        "yt-fxFail00001"
+      ]
+    }
+  ],
+  "excluded": [
+    "yt-fxPiano0001"
+  ],
+  "active": "long-night"
+}

@@ -1,0 +1,6 @@
+**
+!run.py
+!dremla_collection/
+!dremla_collection/**
+**/__pycache__
+**/*.pyc

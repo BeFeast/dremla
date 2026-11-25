@@ -1,0 +1,21 @@
+.gradle/
+.idea/
+.kotlin/
+build/
+captures/
+local.properties
+*.iml
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.apk
+*.aab
+
+# Local release preparation (published assets never enter git).
+/release-out/
+
+# Host-only collection state and Python caches.
+/.collection-service/
+__pycache__/
+*.pyc

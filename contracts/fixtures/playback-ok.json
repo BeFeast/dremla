@@ -1,0 +1,45 @@
+{
+  "selection": [
+    "yt-fxAmbient01",
+    "yt-fxRain00001",
+    "yt-fxFail00001"
+  ],
+  "steps": [
+    {
+      "event": "resolve",
+      "expect": {
+        "phase": "playing",
+        "sound": true,
+        "timer": "running"
+      },
+      "track": "yt-fxAmbient01",
+      "result": "ok"
+    },
+    {
+      "event": "trackEnd",
+      "expect": {
+        "phase": "starting",
+        "sound": false,
+        "timer": "running"
+      }
+    },
+    {
+      "event": "resolve",
+      "expect": {
+        "phase": "playing",
+        "sound": true,
+        "timer": "running"
+      },
+      "track": "yt-fxRain00001",
+      "result": "ok"
+    },
+    {
+      "event": "timerExpired",
+      "expect": {
+        "phase": "finished",
+        "sound": false,
+        "timer": "expired"
+      }
+    }
+  ]
+}

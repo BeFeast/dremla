@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dremla mark, night colours (brand/final/mark-night.svg): ring = text-2, dot = ember.
+     In-app only on the first-launch (download) screen. Static, never animated. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+    <path
+        android:fillColor="@color/brand_night_text2"
+        android:fillType="evenOdd"
+        android:pathData="M1,32a31,31 0 1,0 62,0a31,31 0 1,0 -62,0zM10,29a22,22 0 1,0 44,0a22,22 0 1,0 -44,0z" />
+    <path
+        android:fillColor="@color/brand_night_ember"
+        android:pathData="M23.19,49.159A9,9 0 0,1 40.81,49.159A22,22 0 0,1 23.19,49.159z" />
+</vector>
